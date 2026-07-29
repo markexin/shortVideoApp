@@ -1,0 +1,25 @@
+# 短剧智能体视频流水线依赖
+
+# ─── LLM (OpenAI-compatible) ───
+openai>=1.0.0                     # MiniMax M3 / other OpenAI-compatible LLMs
+
+# ─── 视频/音频处理 ───
+# ffmpeg 需系统安装: brew install ffmpeg
+librosa>=0.10.0                   # 音乐 BPM + 节拍检测
+soundfile>=0.12.0                 # librosa 依赖
+numpy>=1.24.0
+
+# ─── 字幕 ───
+pysrt>=1.1.2
+
+# ─── 图像 ───
+opencv-python>=4.8.0              # 帧提取 + 质量检测
+Pillow>=10.0.0
+
+# ─── 通用 ───
+requests>=2.31.0
+python-dotenv>=1.0.0
+pyyaml>=6.0
+aiohttp>=3.9.0
+rich>=13.0.0                      # 终端美化输出
+prompt_toolkit>=3.0.0             # 稳定处理中文宽字符、删除键和光标移动

@@ -1,0 +1,79 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+FLOW = [
+    "home",
+    "script_confirm",
+    "script_confirmed",
+    "characters_ready",
+    "storyboard_ready",
+    "image_prompts_exported",
+    "videos_ready",
+    "episode_ready",
+]
+
+
+@dataclass(frozen=True)
+class Action:
+    number: str
+    label: str
+    command_name: str
+    command_text: str
+
+
+COMMON_ACTIONS = [
+    Action("6", "切换剧本", "switch_project", "切换剧本"),
+    Action("7", "查看状态", "status", "查看状态"),
+    Action("0", "退出", "exit", "退出"),
+]
+
+
+STEP_ACTIONS = {
+    "script_confirm": [
+        Action("1", "查看脚本内容", "show_script", "查看脚本"),
+        Action("2", "确认脚本，进入角色生成", "confirm_script", "确认脚本"),
+    ],
+    "script_confirmed": [
+        Action("3", "生成角色圣经", "generate_characters", "生成角色"),
+    ],
+    "characters_ready": [
+        Action("4", "生成短剧分镜", "generate_storyboard", "生成分镜"),
+    ],
+    "storyboard_ready": [
+        Action("5", "导出图片提示词", "export_image_prompts", "导出图片提示词"),
+    ],
+    "image_prompts_exported": [
+        Action("8", "图片已准备后生成全部视频", "generate_all", "生成全部"),
+    ],
+    "videos_ready": [
+        Action("9", "合成整集", "assemble_episode", "合成整集"),
+    ],
+    "episode_ready": [
+        Action("9", "重新合成整集", "assemble_episode", "合成整集"),
+    ],
+}
+
+
+def can_transition(current_step: str, target_step: str) -> bool:
+    if current_step == target_step:
+        return True
+    if current_step not in FLOW or target_step not in FLOW:
+        return False
+    return FLOW.index(target_step) <= FLOW.index(current_step) + 1
+
+
+def next_step(current_step: str) -> str | None:
+    if current_step not in FLOW:
+        return None
+    index = FLOW.index(current_step)
+    if index + 1 >= len(FLOW):
+        return None
+    return FLOW[index + 1]
+
+
+def available_actions(current_step: str) -> list[Action]:
+    actions = list(STEP_ACTIONS.get(current_step, []))
+    actions.extend(COMMON_ACTIONS)
+    return actions

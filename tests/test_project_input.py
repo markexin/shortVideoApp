@@ -1,0 +1,30 @@
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from agent.interactive import normalize_new_project_fields
+
+
+def test_normalize_new_project_fields_allows_blank_platform():
+    fields = normalize_new_project_fields(
+        premise="儿童故事",
+        title="儿童漫剧",
+        genre="修仙短剧",
+        platform="",
+    )
+
+    assert fields["platform"] == "manual"
+    assert fields["genre"] == "修仙短剧"
+
+
+def test_normalize_new_project_fields_defaults_blank_genre():
+    fields = normalize_new_project_fields(
+        premise="儿童故事",
+        title="",
+        genre="",
+        platform="",
+    )
+
+    assert fields["title"] == "儿童故事"
+    assert fields["genre"] == "儿童教育短剧"
