@@ -16,7 +16,7 @@ from pipeline.drama_storyboard import generate_drama_storyboard
 from pipeline.episode_assembler import assemble_episode
 from pipeline.generator import VideoGenerator
 from pipeline.prompt_builder import build_image_prompt
-from pipeline.script_writer import generate_script
+from pipeline.script_writer import generate_script_reflectively
 from projects.manager import ProjectManager
 from projects.schema import Character, Project, Shot, now_iso
 
@@ -29,13 +29,30 @@ def normalize_new_project_fields(
     title: str,
     genre: str,
     platform: str,
+    episode_count: str = "",
+    minutes_per_episode: str = "",
+    audience: str = "",
+    pacing_style: str = "",
 ) -> dict[str, str]:
     normalized_premise = premise.strip()
+    try:
+        normalized_episode_count = max(1, int(episode_count.strip())) if episode_count.strip() else 6
+    except ValueError:
+        normalized_episode_count = 6
+    try:
+        minutes = float(minutes_per_episode.strip()) if minutes_per_episode.strip() else 1
+    except ValueError:
+        minutes = 1
+    seconds_per_episode = max(15, int(minutes * 60))
     return {
         "premise": normalized_premise,
         "title": title.strip() or normalized_premise[:20] or "未命名短剧",
         "genre": genre.strip() or "儿童教育短剧",
         "platform": platform.strip() or "manual",
+        "episode_count": normalized_episode_count,
+        "seconds_per_episode": seconds_per_episode,
+        "audience": audience.strip() or "3-8岁儿童",
+        "pacing_style": pacing_style.strip() or "寓教于乐，单集有起承转合",
     }
 
 
@@ -69,6 +86,9 @@ class ShortDramaAgent:
             "switch_project": self._handle_switch_project,
             "status": self._handle_status,
             "show_script": self._handle_show_script,
+            "show_characters": self._handle_show_characters,
+            "show_storyboard": self._handle_show_storyboard,
+            "edit_settings": self._handle_edit_settings,
             "confirm_script": self._handle_confirm_script,
             "generate_characters": self._handle_generate_characters,
             "generate_storyboard": self._handle_generate_storyboard,
@@ -135,6 +155,9 @@ class ShortDramaAgent:
         console.print(f"角色: {len(project.characters)} 个，分镜: {len(project.shots)} 个")
         ready = sum(1 for shot in project.shots if shot.image_path)
         console.print(f"已绑定图片: {ready}/{len(project.shots)}")
+        self._print_script_preview(project, max_lines=12)
+        self._print_characters(project)
+        self._print_storyboard(project)
         self._print_project_menu()
 
     def _handle_show_script(self, command: Command) -> None:
@@ -142,6 +165,65 @@ class ShortDramaAgent:
         if not project:
             return
         self._print_script_preview(project, max_lines=80)
+        self._print_project_menu()
+
+    def _handle_show_characters(self, command: Command) -> None:
+        project = self._require_project()
+        if not project:
+            return
+        self._print_characters(project, full=True)
+        self._print_project_menu()
+
+    def _handle_show_storyboard(self, command: Command) -> None:
+        project = self._require_project()
+        if not project:
+            return
+        self._print_storyboard(project, full=True)
+        self._print_project_menu()
+
+    def _handle_edit_settings(self, command: Command) -> None:
+        project = self._require_project()
+        if not project:
+            return
+        console.print("[yellow]修改设定会清空角色、分镜、图片和视频结果，并回到脚本确认阶段。[/yellow]")
+        confirm = read_text("确认修改？输入 y 继续 [n]: ").strip().lower()
+        if confirm != "y":
+            console.print("已取消修改。")
+            self._print_project_menu()
+            return
+
+        title = read_text(f"剧名 [{project.title}]: ").strip() or project.title
+        genre = read_text(f"题材 [{project.genre}]: ").strip() or project.genre
+        episode_count = read_text(f"集数 [{project.episode_count}]: ").strip() or str(project.episode_count)
+        minutes = project.seconds_per_episode / 60
+        minutes_per_episode = read_text(f"每集分钟数 [{minutes:g}]: ").strip() or f"{minutes:g}"
+        audience = read_text(f"目标受众 [{project.audience}]: ").strip() or project.audience
+        pacing_style = read_text(f"节奏风格 [{project.pacing_style}]: ").strip() or project.pacing_style
+        platform = read_text(f"平台 [{project.platform}]: ").strip() or project.platform
+
+        fields = normalize_new_project_fields(
+            premise=project.script or project.title,
+            title=title,
+            genre=genre,
+            platform=platform,
+            episode_count=episode_count,
+            minutes_per_episode=minutes_per_episode,
+            audience=audience,
+            pacing_style=pacing_style,
+        )
+        project.title = fields["title"]
+        project.genre = fields["genre"]
+        project.platform = fields["platform"]
+        project.episode_count = fields["episode_count"]
+        project.seconds_per_episode = fields["seconds_per_episode"]
+        project.audience = fields["audience"]
+        project.pacing_style = fields["pacing_style"]
+        project.characters = []
+        project.shots = []
+        project.current_step = "script_confirm"
+        project.updated_at = now_iso()
+        self.manager.save_project(project)
+        console.print("[green]设定已修改。[/green] 请查看脚本，必要时新建或重写脚本，再确认脚本。")
         self._print_project_menu()
 
     def _handle_confirm_script(self, command: Command) -> None:
@@ -282,34 +364,55 @@ class ShortDramaAgent:
             premise = read_text("短剧创意: ").strip()
         title = read_text("剧名: ").strip()
         genre = read_text("题材 [儿童教育短剧]: ").strip()
+        episode_count = read_text("集数 [6]: ").strip()
+        minutes_per_episode = read_text("每集分钟数 [1]: ").strip()
+        audience = read_text("目标受众 [3-8岁儿童]: ").strip()
+        pacing_style = read_text("节奏风格 [寓教于乐，单集有起承转合]: ").strip()
         platform = read_text("平台 [可跳过，默认手动发布]: ").strip()
         fields = normalize_new_project_fields(
             premise=premise,
             title=title,
             genre=genre,
             platform=platform,
+            episode_count=episode_count,
+            minutes_per_episode=minutes_per_episode,
+            audience=audience,
+            pacing_style=pacing_style,
         )
         project = self.manager.create_project(
             fields["title"],
             genre=fields["genre"],
             platform=fields["platform"],
+            episode_count=fields["episode_count"],
+            seconds_per_episode=fields["seconds_per_episode"],
+            audience=fields["audience"],
+            pacing_style=fields["pacing_style"],
         )
         console.print("[cyan]开始生成短剧脚本...[/cyan]")
         try:
-            with console.status("[cyan]正在调用 LLM 生成短剧脚本，请稍候...[/cyan]", spinner="dots"):
-                project.script = generate_script(
+            with console.status("[cyan]正在执行主写 + 反思质检生成剧本，请稍候...[/cyan]", spinner="dots"):
+                script_result = generate_script_reflectively(
                     fields["premise"],
                     genre=fields["genre"],
                     platform=fields["platform"],
+                    episode_count=fields["episode_count"],
+                    seconds_per_episode=fields["seconds_per_episode"],
+                    audience=fields["audience"],
+                    pacing_style=fields["pacing_style"],
                 )
+                project.script = script_result.script
         except Exception as exc:
             console.print(f"[red]短剧脚本生成失败:[/red] {exc}")
             return
         project.current_step = "script_confirm"
         project.updated_at = now_iso()
         self.manager.save_project(project)
+        self._save_script_reflections(project, script_result.reflections)
         self.current_project = project
-        console.print("[green]脚本已生成并保存。[/green] 下一步可确认脚本、生成角色和分镜。")
+        console.print(
+            f"[green]脚本已生成并保存。[/green] 已完成 {script_result.rounds} 轮反思质检。"
+            " 下一步可确认脚本、生成角色和分镜。"
+        )
         self._print_script_preview(project)
         self._print_project_menu()
 
@@ -422,6 +525,8 @@ class ShortDramaAgent:
         video_ready = sum(1 for shot in project.shots if shot.video_path)
         table.add_row("当前步骤", project.current_step)
         table.add_row("题材/平台", f"{project.genre} / {project.platform}")
+        table.add_row("集数/单集", f"{project.episode_count} 集 / {project.seconds_per_episode} 秒")
+        table.add_row("受众/节奏", f"{project.audience} / {project.pacing_style}")
         table.add_row("角色/分镜", f"{len(project.characters)} / {len(project.shots)}")
         table.add_row("图片/视频", f"{image_ready}/{len(project.shots)} / {video_ready}/{len(project.shots)}")
         console.print(table)
@@ -448,6 +553,59 @@ class ShortDramaAgent:
         if len(lines) > max_lines:
             preview += f"\n\n... 已省略 {len(lines) - max_lines} 行，输入 `查看脚本` 可显示更多。"
         console.print(Panel(preview, title="脚本预览", border_style="cyan"))
+
+    def _save_script_reflections(self, project: Project, reflections: list[str]) -> None:
+        if not reflections:
+            return
+        log_path = self.manager.project_dir(project.project_id) / "logs" / "script_reflections.md"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        blocks = []
+        for index, reflection in enumerate(reflections, start=1):
+            blocks.append(f"## 第 {index} 轮反思质检\n\n{reflection.strip()}\n")
+        log_path.write_text("# 剧本反思质检记录\n\n" + "\n".join(blocks), encoding="utf-8")
+        console.print(f"[cyan]反思记录:[/cyan] {log_path}")
+
+    def _print_characters(self, project: Project, full: bool = False) -> None:
+        if not project.characters:
+            console.print("[yellow]角色圣经: 暂无。[/yellow]")
+            return
+        table = Table(title="角色圣经")
+        table.add_column("角色")
+        table.add_column("外观锚点")
+        table.add_column("一致性提示")
+        rows = project.characters if full else project.characters[:5]
+        for character in rows:
+            table.add_row(
+                character.name,
+                character.description[:80],
+                character.consistency_prompt[:80],
+            )
+        console.print(table)
+        if len(project.characters) > len(rows):
+            console.print(f"... 还有 {len(project.characters) - len(rows)} 个角色，输入 `查看角色` 显示完整列表。")
+
+    def _print_storyboard(self, project: Project, full: bool = False) -> None:
+        if not project.shots:
+            console.print("[yellow]分镜: 暂无。[/yellow]")
+            return
+        table = Table(title="分镜摘要")
+        table.add_column("镜头", justify="right")
+        table.add_column("场景")
+        table.add_column("角色")
+        table.add_column("动作")
+        table.add_column("状态")
+        rows = project.shots if full else project.shots[:8]
+        for shot in rows:
+            table.add_row(
+                str(shot.shot_id),
+                shot.scene_description[:30],
+                ", ".join(shot.characters)[:30],
+                shot.action[:50],
+                shot.status,
+            )
+        console.print(table)
+        if len(project.shots) > len(rows):
+            console.print(f"... 还有 {len(project.shots) - len(rows)} 个镜头，输入 `查看分镜` 显示完整列表。")
 
     @staticmethod
     def _print_home() -> None:

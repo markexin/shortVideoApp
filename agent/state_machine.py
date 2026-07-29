@@ -24,6 +24,7 @@ class Action:
 
 
 COMMON_ACTIONS = [
+    Action("10", "修改题材/受众/集数等设定", "edit_settings", "修改设定"),
     Action("6", "切换剧本", "switch_project", "切换剧本"),
     Action("7", "查看状态", "status", "查看状态"),
     Action("0", "退出", "exit", "退出"),
@@ -36,21 +37,36 @@ STEP_ACTIONS = {
         Action("2", "确认脚本，进入角色生成", "confirm_script", "确认脚本"),
     ],
     "script_confirmed": [
+        Action("1", "查看脚本内容", "show_script", "查看脚本"),
         Action("3", "生成角色圣经", "generate_characters", "生成角色"),
     ],
     "characters_ready": [
+        Action("1", "查看脚本内容", "show_script", "查看脚本"),
+        Action("2", "查看角色圣经", "show_characters", "查看角色"),
         Action("4", "生成短剧分镜", "generate_storyboard", "生成分镜"),
     ],
     "storyboard_ready": [
+        Action("1", "查看脚本内容", "show_script", "查看脚本"),
+        Action("2", "查看角色圣经", "show_characters", "查看角色"),
+        Action("3", "查看分镜摘要", "show_storyboard", "查看分镜"),
         Action("5", "导出图片提示词", "export_image_prompts", "导出图片提示词"),
     ],
     "image_prompts_exported": [
+        Action("1", "查看脚本内容", "show_script", "查看脚本"),
+        Action("2", "查看角色圣经", "show_characters", "查看角色"),
+        Action("3", "查看分镜摘要", "show_storyboard", "查看分镜"),
         Action("8", "图片已准备后生成全部视频", "generate_all", "生成全部"),
     ],
     "videos_ready": [
+        Action("1", "查看脚本内容", "show_script", "查看脚本"),
+        Action("2", "查看角色圣经", "show_characters", "查看角色"),
+        Action("3", "查看分镜摘要", "show_storyboard", "查看分镜"),
         Action("9", "合成整集", "assemble_episode", "合成整集"),
     ],
     "episode_ready": [
+        Action("1", "查看脚本内容", "show_script", "查看脚本"),
+        Action("2", "查看角色圣经", "show_characters", "查看角色"),
+        Action("3", "查看分镜摘要", "show_storyboard", "查看分镜"),
         Action("9", "重新合成整集", "assemble_episode", "合成整集"),
     ],
 }

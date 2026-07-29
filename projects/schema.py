@@ -65,6 +65,10 @@ class Project:
     title: str
     genre: str = ""
     platform: str = ""
+    episode_count: int = 6
+    seconds_per_episode: int = 60
+    audience: str = "3-8岁儿童"
+    pacing_style: str = "寓教于乐"
     script: str = ""
     current_step: str = "home"
     characters: list[Character] = field(default_factory=list)
@@ -82,6 +86,10 @@ class Project:
             title=data.get("title", ""),
             genre=data.get("genre", ""),
             platform=data.get("platform", ""),
+            episode_count=int(data.get("episode_count", 6)),
+            seconds_per_episode=int(data.get("seconds_per_episode", 60)),
+            audience=data.get("audience", "3-8岁儿童"),
+            pacing_style=data.get("pacing_style", "寓教于乐"),
             script=data.get("script", ""),
             current_step=data.get("current_step", "home"),
             characters=[

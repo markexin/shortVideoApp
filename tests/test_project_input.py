@@ -12,10 +12,17 @@ def test_normalize_new_project_fields_allows_blank_platform():
         title="儿童漫剧",
         genre="修仙短剧",
         platform="",
+        episode_count="12",
+        minutes_per_episode="2",
+        audience="3-8岁孩子",
+        pacing_style="寓教于乐",
     )
 
     assert fields["platform"] == "manual"
     assert fields["genre"] == "修仙短剧"
+    assert fields["episode_count"] == 12
+    assert fields["seconds_per_episode"] == 120
+    assert fields["audience"] == "3-8岁孩子"
 
 
 def test_normalize_new_project_fields_defaults_blank_genre():
@@ -24,7 +31,14 @@ def test_normalize_new_project_fields_defaults_blank_genre():
         title="",
         genre="",
         platform="",
+        episode_count="",
+        minutes_per_episode="",
+        audience="",
+        pacing_style="",
     )
 
     assert fields["title"] == "儿童故事"
     assert fields["genre"] == "儿童教育短剧"
+    assert fields["episode_count"] == 6
+    assert fields["seconds_per_episode"] == 60
+    assert fields["audience"] == "3-8岁儿童"

@@ -27,6 +27,9 @@ def test_parse_unknown_text_as_message():
 def test_parse_short_drama_flow_commands():
     assert parse_command("确认脚本").name == "confirm_script"
     assert parse_command("查看脚本").name == "show_script"
+    assert parse_command("查看角色").name == "show_characters"
+    assert parse_command("查看分镜").name == "show_storyboard"
+    assert parse_command("修改设定").name == "edit_settings"
     assert parse_command("生成角色").name == "generate_characters"
     assert parse_command("生成分镜").name == "generate_storyboard"
     assert parse_command("导出图片提示词").name == "export_image_prompts"
@@ -43,3 +46,4 @@ def test_parse_home_menu_numbers():
     assert parse_command("7").name == "status"
     assert parse_command("8").name == "generate_all"
     assert parse_command("9").name == "assemble_episode"
+    assert parse_command("10").name == "edit_settings"

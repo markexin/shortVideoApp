@@ -18,6 +18,10 @@ class ProjectManager:
         title: str,
         genre: str = "",
         platform: str = "",
+        episode_count: int = 6,
+        seconds_per_episode: int = 60,
+        audience: str = "3-8岁儿童",
+        pacing_style: str = "寓教于乐",
     ) -> Project:
         prefix = self._slugify(title) or "project"
         project = Project(
@@ -25,6 +29,10 @@ class ProjectManager:
             title=title,
             genre=genre,
             platform=platform,
+            episode_count=episode_count,
+            seconds_per_episode=seconds_per_episode,
+            audience=audience,
+            pacing_style=pacing_style,
         )
         project_dir = self.project_dir(project.project_id)
         (project_dir / "prompts").mkdir(parents=True, exist_ok=True)
