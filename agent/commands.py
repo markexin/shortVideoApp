@@ -4,6 +4,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from agent.state_machine import available_actions
+
 
 @dataclass(frozen=True)
 class Command:
@@ -84,3 +86,12 @@ def parse_command(text: str) -> Command:
         )
 
     return Command("message", {"text": raw})
+
+
+def parse_contextual_command(text: str, current_step: str | None = None) -> Command:
+    raw = text.strip()
+    if current_step and raw.isdigit():
+        for action in available_actions(current_step):
+            if action.number == raw:
+                return Command(action.command_name)
+    return parse_command(raw)

@@ -14,8 +14,20 @@ def test_project_manager_creates_and_reloads_project():
     with tempfile.TemporaryDirectory() as tmp:
         manager = ProjectManager(Path(tmp))
 
-        project = manager.create_project("逆袭测试剧", genre="都市逆袭", platform="douyin")
+        project = manager.create_project(
+            "逆袭测试剧",
+            genre="都市逆袭",
+            platform="douyin",
+            premise="一个药师被仙门羞辱后逆袭",
+        )
         project.script = "第一集：主角被羞辱后反击。"
+        project.script_units = [{"episode": 1, "content": "第一集：主角被羞辱后反击。"}]
+        project.script_generation = {
+            "status": "draft_saved",
+            "script": "第一集：主角被羞辱后反击。",
+            "reflections": ["FAIL\n总分: 70"],
+            "next_round": 2,
+        }
         project.characters.append(
             Character(
                 name="林晚",
@@ -31,7 +43,10 @@ def test_project_manager_creates_and_reloads_project():
         assert reloaded.title == "逆袭测试剧"
         assert reloaded.genre == "都市逆袭"
         assert reloaded.platform == "douyin"
+        assert reloaded.premise == "一个药师被仙门羞辱后逆袭"
         assert reloaded.script.startswith("第一集")
+        assert reloaded.script_units[0]["episode"] == 1
+        assert reloaded.script_generation["next_round"] == 2
         assert reloaded.characters[0].name == "林晚"
         assert (Path(tmp) / project.project_id / "project.json").exists()
         assert (Path(tmp) / project.project_id / "script.md").read_text(

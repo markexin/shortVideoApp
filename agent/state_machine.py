@@ -25,6 +25,7 @@ class Action:
 
 COMMON_ACTIONS = [
     Action("10", "修改题材/受众/集数等设定", "edit_settings", "修改设定"),
+    Action("11", "继续上次脚本生成", "continue", "继续"),
     Action("6", "切换剧本", "switch_project", "切换剧本"),
     Action("7", "查看状态", "status", "查看状态"),
     Action("0", "退出", "exit", "退出"),

@@ -63,6 +63,7 @@ class Shot:
 class Project:
     project_id: str
     title: str
+    premise: str = ""
     genre: str = ""
     platform: str = ""
     episode_count: int = 6
@@ -70,6 +71,8 @@ class Project:
     audience: str = "3-8岁儿童"
     pacing_style: str = "寓教于乐"
     script: str = ""
+    script_units: list[dict[str, Any]] = field(default_factory=list)
+    script_generation: dict[str, Any] = field(default_factory=dict)
     current_step: str = "home"
     characters: list[Character] = field(default_factory=list)
     shots: list[Shot] = field(default_factory=list)
@@ -84,6 +87,7 @@ class Project:
         return cls(
             project_id=data["project_id"],
             title=data.get("title", ""),
+            premise=data.get("premise", ""),
             genre=data.get("genre", ""),
             platform=data.get("platform", ""),
             episode_count=int(data.get("episode_count", 6)),
@@ -91,6 +95,8 @@ class Project:
             audience=data.get("audience", "3-8岁儿童"),
             pacing_style=data.get("pacing_style", "寓教于乐"),
             script=data.get("script", ""),
+            script_units=list(data.get("script_units", [])),
+            script_generation=dict(data.get("script_generation", {})),
             current_step=data.get("current_step", "home"),
             characters=[
                 Character.from_dict(item) for item in data.get("characters", [])

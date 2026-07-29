@@ -5,10 +5,11 @@ from pathlib import Path
 
 from rich.console import Console
 from rich.panel import Panel
+from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn, TimeRemainingColumn
 from rich.table import Table
 
 import config
-from agent.commands import Command, parse_command
+from agent.commands import Command, parse_contextual_command
 from agent.state_machine import available_actions, can_transition
 from agent.terminal_input import read_text
 from pipeline.character_bible import generate_character_bible
@@ -16,7 +17,8 @@ from pipeline.drama_storyboard import generate_drama_storyboard
 from pipeline.episode_assembler import assemble_episode
 from pipeline.generator import VideoGenerator
 from pipeline.prompt_builder import build_image_prompt
-from pipeline.script_writer import generate_script_reflectively
+from pipeline.script_writer import ScriptGenerationCheckpoint, generate_script_reflectively
+from pipeline.script_validator import validate_script_completeness
 from projects.manager import ProjectManager
 from projects.schema import Character, Project, Shot, now_iso
 
@@ -76,12 +78,14 @@ class ShortDramaAgent:
                 return
             if not text:
                 continue
-            self.handle(parse_command(text))
+            current_step = self.current_project.current_step if self.current_project else None
+            self.handle(parse_contextual_command(text, current_step))
 
     def handle(self, command: Command) -> None:
         handlers = {
             "home": self._handle_home,
             "back": self._handle_back,
+            "continue": self._handle_continue,
             "new_project": self._handle_new_project,
             "switch_project": self._handle_switch_project,
             "status": self._handle_status,
@@ -113,6 +117,27 @@ class ShortDramaAgent:
         if len(self.history) > 1:
             self.history.pop()
         console.print(f"已返回: {self.history[-1]}")
+
+    def _handle_continue(self, command: Command) -> None:
+        project = self._require_project()
+        if not project:
+            return
+        validation = validate_script_completeness(project)
+        has_checkpoint = project.script_generation.get("status") in {
+            "draft_saved",
+            "reflection_saved",
+            "refined_saved",
+            "running",
+            "max_rounds_reached",
+        }
+        if not has_checkpoint and validation.is_complete:
+            console.print("当前没有可继续的脚本生成任务。")
+            self._print_project_menu()
+            return
+        if not validation.is_complete:
+            console.print("[yellow]检测到当前脚本不完整，将按项目设定继续修复/重新生成。[/yellow]")
+            self._print_script_validation(validation)
+        self._generate_project_script(project, resume=has_checkpoint)
 
     def _handle_new_project(self, command: Command) -> None:
         self._create_project_interactively("")
@@ -231,6 +256,24 @@ class ShortDramaAgent:
         if not project:
             return
         if not self._require_step({"script_confirm", "characters_ready", "storyboard_ready"}):
+            return
+        if not project.script:
+            console.print("[red]当前项目没有脚本，不能确认。[/red]")
+            self._print_project_menu()
+            return
+        validation = validate_script_completeness(project)
+        if not validation.is_complete:
+            console.print("[red]当前脚本未通过完整性校验，不能确认。[/red]")
+            self._print_script_validation(validation)
+            console.print("请先输入 `继续`，让系统按当前项目设定修复/重新生成脚本。")
+            self._print_project_menu()
+            return
+        self._print_script_preview(project, max_lines=100000)
+        console.print("[yellow]请完整检查脚本内容。确认后会进入角色生成阶段。[/yellow]")
+        confirm = read_text("确认脚本完整且可进入角色生成？输入 y 继续 [n]: ").strip().lower()
+        if confirm != "y":
+            console.print("已取消确认。可以输入 `修改设定` 或 `继续` 重新生成/续写。")
+            self._print_project_menu()
             return
         if not self._advance_step("script_confirmed"):
             return
@@ -381,6 +424,7 @@ class ShortDramaAgent:
         )
         project = self.manager.create_project(
             fields["title"],
+            premise=fields["premise"],
             genre=fields["genre"],
             platform=fields["platform"],
             episode_count=fields["episode_count"],
@@ -388,33 +432,129 @@ class ShortDramaAgent:
             audience=fields["audience"],
             pacing_style=fields["pacing_style"],
         )
+        self.current_project = project
+        self._generate_project_script(project, resume=False)
+
+    def _generate_project_script(self, project: Project, resume: bool = False) -> None:
         console.print("[cyan]开始生成短剧脚本...[/cyan]")
+        script_result = None
         try:
-            with console.status("[cyan]正在执行主写 + 反思质检生成剧本，请稍候...[/cyan]", spinner="dots"):
+            self._print_script_generation_plan(project.episode_count)
+            resume_from = self._script_checkpoint_from_project(project) if resume else None
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TextColumn("{task.percentage:>3.0f}%"),
+                TimeElapsedColumn(),
+                TimeRemainingColumn(),
+                console=console,
+            ) as progress:
+                task_id = progress.add_task("准备调用 LLM", total=6)
+
+                def update_progress(event) -> None:
+                    progress.update(
+                        task_id,
+                        total=event.total,
+                        completed=event.completed,
+                        description=f"{event.label} - {event.detail}",
+                    )
+
                 script_result = generate_script_reflectively(
-                    fields["premise"],
-                    genre=fields["genre"],
-                    platform=fields["platform"],
-                    episode_count=fields["episode_count"],
-                    seconds_per_episode=fields["seconds_per_episode"],
-                    audience=fields["audience"],
-                    pacing_style=fields["pacing_style"],
+                    self._script_generation_premise(project),
+                    genre=project.genre,
+                    platform=project.platform,
+                    episode_count=project.episode_count,
+                    seconds_per_episode=project.seconds_per_episode,
+                    audience=project.audience,
+                    pacing_style=project.pacing_style,
+                    on_progress=update_progress,
+                    on_checkpoint=lambda checkpoint: self._save_script_checkpoint(project, checkpoint),
+                    resume_from=resume_from,
                 )
                 project.script = script_result.script
         except Exception as exc:
             console.print(f"[red]短剧脚本生成失败:[/red] {exc}")
+            if project.script_generation:
+                console.print("[yellow]已保存当前可用进度。修复网络/API问题后输入 `继续` 可从上次进度续写。[/yellow]")
+                project.current_step = "script_confirm"
+                project.updated_at = now_iso()
+                self.manager.save_project(project)
+                self._print_project_menu()
             return
         project.current_step = "script_confirm"
         project.updated_at = now_iso()
         self.manager.save_project(project)
         self._save_script_reflections(project, script_result.reflections)
-        self.current_project = project
         console.print(
             f"[green]脚本已生成并保存。[/green] 已完成 {script_result.rounds} 轮反思质检。"
             " 下一步可确认脚本、生成角色和分镜。"
         )
         self._print_script_preview(project)
         self._print_project_menu()
+
+    def _print_script_generation_plan(self, episode_count: int) -> None:
+        estimated_seconds = 120 + max(1, episode_count) * 25
+        estimated_minutes = max(2, round(estimated_seconds / 60))
+        console.print(
+            f"[dim]预计耗时约 {estimated_minutes}-{estimated_minutes + 3} 分钟，"
+            "取决于 LLM 响应速度和是否进入多轮改写。[/dim]"
+        )
+        table = Table(title="脚本生成步骤")
+        table.add_column("步骤")
+        table.add_column("内容")
+        table.add_row("1", "主写生成完整短剧初稿")
+        table.add_row("2", "第 1 轮反思质检，至少执行一次")
+        table.add_row("3", "如未通过，主写根据质检意见改写")
+        table.add_row("4", "最多继续到第 3 轮质检")
+        table.add_row("5", "保存脚本和反思日志")
+        console.print(table)
+
+    def _script_generation_premise(self, project: Project) -> str:
+        if project.premise:
+            return project.premise
+        if project.script:
+            legacy = project.script.replace("<think>", "").replace("</think>", "")
+            return (
+                f"项目标题: {project.title}\n"
+                "下面是旧版残缺脚本，仅作为题材和人物参考。请按当前项目设定重新规划完整脚本，"
+                "不要沿用旧脚本中的错误集数、错误时长或模型思考内容。\n\n"
+                f"{legacy[:4000]}"
+            )
+        return project.title
+
+    def _print_script_validation(self, validation) -> None:
+        console.print(
+            f"[yellow]完整性: {validation.episode_count}/{validation.expected_episode_count} 集[/yellow]"
+        )
+        for issue in validation.issues:
+            console.print(f"[yellow]- {issue}[/yellow]")
+
+    def _save_script_checkpoint(self, project: Project, checkpoint: ScriptGenerationCheckpoint) -> None:
+        project.script = checkpoint.script or project.script
+        project.script_generation = {
+            "status": checkpoint.status,
+            "script": checkpoint.script,
+            "reflections": checkpoint.reflections or [],
+            "next_round": checkpoint.next_round,
+        }
+        project.current_step = "script_confirm"
+        project.updated_at = now_iso()
+        self.manager.save_project(project)
+        if checkpoint.reflections:
+            self._save_script_reflections(project, checkpoint.reflections)
+
+    def _script_checkpoint_from_project(self, project: Project) -> ScriptGenerationCheckpoint | None:
+        generation = project.script_generation or {}
+        script = generation.get("script") or project.script
+        if not script:
+            return None
+        return ScriptGenerationCheckpoint(
+            script=script,
+            reflections=list(generation.get("reflections", [])),
+            next_round=int(generation.get("next_round", 1)),
+            status=generation.get("status", "running"),
+        )
 
     def _apply_generation_results(self, results) -> None:
         project = self._require_project()
@@ -529,6 +669,11 @@ class ShortDramaAgent:
         table.add_row("受众/节奏", f"{project.audience} / {project.pacing_style}")
         table.add_row("角色/分镜", f"{len(project.characters)} / {len(project.shots)}")
         table.add_row("图片/视频", f"{image_ready}/{len(project.shots)} / {video_ready}/{len(project.shots)}")
+        validation = validate_script_completeness(project)
+        table.add_row(
+            "脚本完整性",
+            "通过" if validation.is_complete else f"未通过: {', '.join(validation.issues[:3])}",
+        )
         console.print(table)
 
         action_table = Table(title="下一步可选")

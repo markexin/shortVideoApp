@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 from uuid import uuid4
 
+from pipeline.script_validator import split_script_units
 from projects.schema import Project
 
 
@@ -16,6 +17,7 @@ class ProjectManager:
     def create_project(
         self,
         title: str,
+        premise: str = "",
         genre: str = "",
         platform: str = "",
         episode_count: int = 6,
@@ -27,6 +29,7 @@ class ProjectManager:
         project = Project(
             project_id=f"{prefix}-{uuid4().hex[:8]}",
             title=title,
+            premise=premise,
             genre=genre,
             platform=platform,
             episode_count=episode_count,
@@ -45,6 +48,8 @@ class ProjectManager:
     def save_project(self, project: Project) -> None:
         project_dir = self.project_dir(project.project_id)
         project_dir.mkdir(parents=True, exist_ok=True)
+        if project.script:
+            project.script_units = split_script_units(project.script)
         path = project_dir / "project.json"
         path.write_text(
             json.dumps(project.to_dict(), ensure_ascii=False, indent=2),

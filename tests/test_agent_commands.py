@@ -3,7 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from agent.commands import parse_command
+from agent.commands import parse_command, parse_contextual_command
 
 
 def test_parse_global_navigation_commands():
@@ -47,3 +47,16 @@ def test_parse_home_menu_numbers():
     assert parse_command("8").name == "generate_all"
     assert parse_command("9").name == "assemble_episode"
     assert parse_command("10").name == "edit_settings"
+
+
+def test_parse_contextual_numbers_use_current_project_menu_first():
+    assert parse_contextual_command("1", "script_confirm").name == "show_script"
+    assert parse_contextual_command("2", "script_confirm").name == "confirm_script"
+    assert parse_contextual_command("1", "characters_ready").name == "show_script"
+    assert parse_contextual_command("2", "characters_ready").name == "show_characters"
+    assert parse_contextual_command("4", "characters_ready").name == "generate_storyboard"
+
+
+def test_parse_contextual_numbers_fall_back_to_home_menu_without_project_step():
+    assert parse_contextual_command("1", None).name == "new_project"
+    assert parse_contextual_command("8", None).name == "generate_all"
