@@ -78,3 +78,49 @@ def test_parse_visual_bible_response_maps_characters_scenes_and_props():
     assert "青石台阶" in bible.scenes[0].description
     assert bible.props[0].category == "prop"
     assert "cracked gray elixir" in bible.props[0].image_prompt
+
+
+def test_parse_visual_bible_response_maps_character_variants():
+    raw = """
+{
+  "characters": [
+    {
+      "name": "林辰",
+      "description": "18岁清瘦少年，同一张脸，黑发低马尾",
+      "consistency_prompt": "same angular jaw, same dark eyes, same low ponytail",
+      "negative_prompt": "no face drift",
+      "variants": [
+        {
+          "name": "初期杂役",
+          "story_stage": "第1-6集",
+          "description": "灰色粗布杂役袍，麻绳腰带，胸口药葫芦印记暗淡",
+          "turnaround_prompt": "turnaround sheet, gray servant robe",
+          "front_view_prompt": "front view, gray servant robe",
+          "side_view_prompt": "side view, gray servant robe",
+          "back_view_prompt": "back view, gray servant robe",
+          "consistency_prompt": "same face, gray servant robe, dim medicine gourd mark",
+          "negative_prompt": "no black robe"
+        },
+        {
+          "name": "觉醒药师",
+          "story_stage": "第7集以后",
+          "description": "黑色药师袍，暗红滚边，药葫芦印记发光",
+          "turnaround_prompt": "turnaround sheet, black pharmacist robe",
+          "front_view_prompt": "front view, black pharmacist robe",
+          "side_view_prompt": "side view, black pharmacist robe",
+          "back_view_prompt": "back view, black pharmacist robe",
+          "consistency_prompt": "same face, black pharmacist robe, glowing medicine gourd mark",
+          "negative_prompt": "no gray servant robe"
+        }
+      ]
+    }
+  ]
+}
+"""
+
+    bible = parse_visual_bible_response(raw)
+
+    assert len(bible.characters[0].variants) == 2
+    assert bible.characters[0].variants[0].name == "初期杂役"
+    assert "gray servant robe" in bible.characters[0].variants[0].turnaround_prompt
+    assert "black pharmacist robe" in bible.characters[0].variants[1].front_view_prompt

@@ -8,6 +8,7 @@ import config
 from pipeline.llm_client import create_llm_client
 from pipeline.visual_style import (
     CHARACTER_REFERENCE_STYLE,
+    CHARACTER_IDENTITY_LOCK,
     PROP_REFERENCE_STYLE,
     REFERENCE_NEGATIVE_PROMPT,
     SCENE_REFERENCE_STYLE,
@@ -41,6 +42,7 @@ def build_character_prompt(script: str, aspect_ratio: str = "9:16") -> str:
 - 场景: {SCENE_REFERENCE_STYLE}
 - 道具: {PROP_REFERENCE_STYLE}
 - 统一负面词必须包含: {REFERENCE_NEGATIVE_PROMPT}
+- 多角度人物一致性锁定必须包含: {CHARACTER_IDENTITY_LOCK}
 
 脚本:
 {script}
@@ -57,7 +59,20 @@ def build_character_prompt(script: str, aspect_ratio: str = "9:16") -> str:
       "side_view_prompt": "English prompt for side view full body reference image",
       "back_view_prompt": "English prompt for back view full body reference image",
       "consistency_prompt": "English image/video consistency prompt, stable face, hair, outfit, age, temperament",
-      "negative_prompt": "English negative prompt, forbid hairstyle changes, age changes, outfit drift, face drift"
+      "negative_prompt": "English negative prompt, forbid hairstyle changes, age changes, outfit drift, face drift",
+      "variants": [
+        {{
+          "name": "阶段/造型名，例如 初期杂役 / 觉醒药师 / 魔化Boss",
+          "story_stage": "出现范围，例如 第1-6集 / 第7集以后 / 终局",
+          "description": "中文阶段造型描述。必须保持同一张脸，只改变剧情阶段允许变化的服装、伤痕、印记、气质或道具",
+          "turnaround_prompt": "English prompt for this specific stage/outfit turnaround sheet",
+          "front_view_prompt": "English prompt for front view of this stage/outfit",
+          "side_view_prompt": "English prompt for side view of this stage/outfit",
+          "back_view_prompt": "English prompt for back view of this stage/outfit",
+          "consistency_prompt": "English consistency prompt for this variant: same base face/hair/body, variant-specific outfit/mark",
+          "negative_prompt": "English negative prompt forbidding other variants' clothes/marks"
+        }}
+      ]
     }}
   ],
   "scenes": [
@@ -88,6 +103,14 @@ def build_character_prompt(script: str, aspect_ratio: str = "9:16") -> str:
 - 道具只输出剧情关键、反复出现或影响人物一致性的道具
 - 外观锚点必须具体、可画面化、可重复
 - 每个角色必须给出三视图相关 prompt: turnaround/front/side/back
+- 如果同一个人物在剧情中有明显阶段变化、服装变化、觉醒/魔化/身份变化，必须拆成 variants，不要把两个时期混在一个 prompt 里
+- variants 至少覆盖脚本里反复出现或视觉差异明显的阶段；例如主角初期杂役袍与觉醒后药师袍必须拆成两个变体
+- 每个 variant 必须保持同一张基础脸、同一年龄段、同一核心发型/脸型/眼型，只改变该阶段允许改变的服装、印记状态、伤痕、气质和道具
+- 基础 character 的 consistency_prompt 描述跨阶段不变的人脸/身材/发型锚点；variant 的 consistency_prompt 描述该阶段专属服装/印记/道具锚点
+- 每个角色的 turnaround/front/side/back prompt 都必须重复同一组身份锚点: 年龄、性别、脸型、眼型、瞳色、眉形、鼻梁、嘴唇、发型、发饰、身材比例、服装剪裁、服装颜色、腰带/配饰、疤痕/刺青/印记/标志道具
+- 三视图只能改变视角，不能改变人设；front/side/back 必须明确写 same exact character, same face, same hairstyle, same outfit, same body proportions, only camera angle changes
+- consistency_prompt 必须写成可复制到每个分镜里的身份锁定块，而不是泛泛写 same character
+- negative_prompt 必须明确禁止 face drift, hairstyle drift, outfit drift, age drift, body type drift, accessory drift, missing scar, missing tattoo, missing signature mark
 - 每个场景和道具必须给出可直接用于图片生成的 image_prompt
 - 所有角色、场景、道具 prompt 必须符合统一参考图风格，不要写成写实真人照片、欧美奇幻、厚涂油画、Q版、扁平插画
 - 人物必须体现精致仙侠 CG 审美: porcelain skin, glossy black hair, delicate face, elegant immortal aura, luminous silver-white/cool highlights

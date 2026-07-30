@@ -17,6 +17,8 @@ class ImageGenerationRequest:
     aspect_ratio: str
     output_path: str
     img_count: int = 1
+    width: int | None = None
+    height: int | None = None
 
 
 class ImageAdapter(Protocol):

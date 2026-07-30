@@ -23,7 +23,7 @@ from pipeline.script_structure_repair import repair_episode_numbering
 from pipeline.script_writer import ScriptGenerationCheckpoint, generate_script_reflectively
 from pipeline.script_validator import validate_script_completeness
 from pipeline.visual_asset_image_generator import VisualAssetImageGenerator
-from pipeline.visual_style import with_reference_negative, with_reference_style
+from pipeline.visual_style import character_identity_lock, with_reference_negative, with_reference_style
 from projects.manager import ProjectManager
 from projects.schema import Character, Project, Shot, now_iso
 from workflows.comfyui_image import ComfyUIImageAdapter, validate_image_workflow
@@ -452,13 +452,11 @@ class ShortDramaAgent:
         task_config = config.liblib_task_config(task_type) if getattr(config, "IMAGE_PROVIDER", "comfyui") == "liblib" else {"img_count": 1}
         limit = command.args.get("limit")
         index = command.args.get("index")
+        variant_index = command.args.get("variant_index")
         if limit is None and index is None:
-            raw = read_text("生成范围：输入数量生成前N个，输入 #序号 生成单个，直接回车生成全部 [5]: ").strip()
+            raw = read_text("生成范围：输入数量生成前N个，输入 #序号 生成单个；角色可输入 #角色序号.变体序号，例如 #1.2；直接回车生成前5个 [5]: ").strip()
             if raw.startswith("#"):
-                try:
-                    index = int(raw[1:].strip())
-                except ValueError:
-                    index = None
+                index, variant_index = self._parse_asset_selection(raw)
             elif raw:
                 try:
                     limit = int(raw)
@@ -474,10 +472,13 @@ class ShortDramaAgent:
             results = asyncio.run(
                 generator.generate_characters(
                     characters=project.characters,
-                    aspect_ratio=project.aspect_ratio,
+                    aspect_ratio=task_config["aspect_ratio"] or project.aspect_ratio,
                     limit=limit,
                     index=index,
+                    variant_index=variant_index,
                     img_count=task_config["img_count"],
+                    width=task_config["width"] or None,
+                    height=task_config["height"] or None,
                 )
             )
         else:
@@ -485,10 +486,12 @@ class ShortDramaAgent:
                 generator.generate_assets(
                     assets=project.visual_assets,
                     category=task_type,
-                    aspect_ratio=project.aspect_ratio,
+                    aspect_ratio=task_config["aspect_ratio"] or project.aspect_ratio,
                     limit=limit,
                     index=index,
                     img_count=task_config["img_count"],
+                    width=task_config["width"] or None,
+                    height=task_config["height"] or None,
                 )
             )
         success = sum(1 for result in results if result.get("status") == "success")
@@ -501,6 +504,23 @@ class ShortDramaAgent:
                 if result.get("status") != "success":
                     console.print(f"[red]失败:[/red] {result.get('error')}")
         self._print_project_menu()
+
+    @staticmethod
+    def _parse_asset_selection(raw: str) -> tuple[int | None, int | None]:
+        value = raw.strip().lstrip("#").strip()
+        if not value:
+            return None, None
+        parts = value.split(".", 1)
+        try:
+            index = int(parts[0])
+        except ValueError:
+            return None, None
+        if len(parts) == 1:
+            return index, None
+        try:
+            return index, int(parts[1])
+        except ValueError:
+            return index, None
 
     def _create_image_adapter(self, task_type: str = "shot"):
         provider = getattr(config, "IMAGE_PROVIDER", "comfyui").lower()
@@ -873,6 +893,19 @@ class ShortDramaAgent:
             table.add_row("一致性", character.consistency_prompt)
             table.add_row("负面词", character.negative_prompt)
             console.print(table)
+            for variant_index, variant in enumerate(character.variants, start=1):
+                variant_table = Table(title=f"角色 {index}.{variant_index}: {character.name} / {variant.name}")
+                variant_table.add_column("项目")
+                variant_table.add_column("内容")
+                variant_table.add_row("阶段", variant.story_stage)
+                variant_table.add_row("描述", variant.description)
+                variant_table.add_row("三视图", variant.turnaround_prompt)
+                variant_table.add_row("正面图", variant.front_view_prompt)
+                variant_table.add_row("侧面图", variant.side_view_prompt)
+                variant_table.add_row("背面图", variant.back_view_prompt)
+                variant_table.add_row("一致性", variant.consistency_prompt)
+                variant_table.add_row("负面词", variant.negative_prompt)
+                console.print(variant_table)
 
         for index, asset in enumerate(visual_bible.scenes, start=1):
             table = Table(title=f"场景 {index}: {asset.name}")
@@ -905,6 +938,7 @@ class ShortDramaAgent:
                 [
                     f"## 角色: {character.name}",
                     f"- 基础描述: {character.description}",
+                    f"- 身份锁定: {character_identity_lock(character.name, character.description, character.consistency_prompt)}",
                     f"- 风格: {with_reference_style(character.style_prompt, 'character')}",
                     f"- 三视图: {with_reference_style(character.turnaround_prompt, 'character')}",
                     f"- 正面图: {with_reference_style(character.front_view_prompt, 'character')}",
@@ -915,6 +949,28 @@ class ShortDramaAgent:
                     "",
                 ]
             )
+            for variant_index, variant in enumerate(character.variants, start=1):
+                variant_lock = character_identity_lock(
+                    character.name,
+                    character.description,
+                    self._join_prompt_parts(character.consistency_prompt, variant.consistency_prompt),
+                )
+                lines.extend(
+                    [
+                        f"### 角色变体 {variant_index}: {variant.name}",
+                        f"- 阶段: {variant.story_stage}",
+                        f"- 描述: {variant.description}",
+                        f"- 身份锁定: {variant_lock}",
+                        f"- 三视图: {with_reference_style(self._join_prompt_parts(variant.turnaround_prompt, variant_lock), 'character')}",
+                        f"- 正面图: {with_reference_style(self._join_prompt_parts(variant.front_view_prompt, self._front_view_lock(), variant_lock), 'character')}",
+                        f"- 侧面图: {with_reference_style(self._join_prompt_parts(variant.side_view_prompt, self._side_view_lock(), variant_lock), 'character')}",
+                        f"- 背面图: {with_reference_style(self._join_prompt_parts(variant.back_view_prompt, self._back_view_lock(), variant_lock), 'character')}",
+                        f"- 一致性: {variant.consistency_prompt}",
+                        f"- 负面词: {with_reference_negative(variant.negative_prompt)}",
+                        f"- 已生成图片: {sum(len(paths) for paths in variant.image_paths.values()) if variant.image_paths else 0} 张",
+                        "",
+                    ]
+                )
         for asset in project.visual_assets:
             title = "场景" if asset.category == "scene" else "道具"
             category = "scene" if asset.category == "scene" else "prop"
@@ -932,6 +988,22 @@ class ShortDramaAgent:
         path = prompt_dir / "visual_bible_prompts.md"
         path.write_text("\n".join(lines), encoding="utf-8")
         console.print(f"[cyan]视觉资产提示词:[/cyan] {path}")
+
+    @staticmethod
+    def _join_prompt_parts(*parts: str) -> str:
+        return " ".join(part.strip() for part in parts if part and part.strip())
+
+    @staticmethod
+    def _front_view_lock() -> str:
+        return "Front view only; same exact character, same face and outfit as side and back views."
+
+    @staticmethod
+    def _side_view_lock() -> str:
+        return "Side profile only; same exact character, same face structure, same hairstyle silhouette and outfit as front and back views."
+
+    @staticmethod
+    def _back_view_lock() -> str:
+        return "Back view only; same exact character, same body proportions, same hairstyle back shape and outfit as front and side views."
 
     @staticmethod
     def _format_episode_ranges(episodes: list[int]) -> str:
@@ -1222,14 +1294,21 @@ class ShortDramaAgent:
         rows = project.characters if full else project.characters[:5]
         for character in rows:
             image_count = sum(len(paths) for paths in character.image_paths.values())
+            variant_image_count = sum(
+                sum(len(paths) for paths in variant.image_paths.values())
+                for variant in character.variants
+            )
             table.add_row(
                 character.name,
                 character.description[:80],
                 (character.turnaround_prompt or character.front_view_prompt)[:80],
                 character.consistency_prompt[:80],
-                f"{image_count} 张" if image_count else "未生成",
+                f"基础{image_count} / 变体{variant_image_count} 张" if character.variants else (f"{image_count} 张" if image_count else "未生成"),
             )
         console.print(table)
+        variant_count = sum(len(character.variants) for character in project.characters)
+        if variant_count:
+            console.print(f"[cyan]角色阶段变体:[/cyan] {variant_count} 个。生成角色图片时会按变体分别生成。")
         if len(project.characters) > len(rows):
             console.print(f"... 还有 {len(project.characters) - len(rows)} 个角色，输入 `查看角色` 显示完整列表。")
         if project.visual_assets:

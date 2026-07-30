@@ -19,6 +19,7 @@ from pipeline.image_generator import ImageGenerationRequest
 DEFAULT_BASE_URL = "https://openapi.liblibai.cloud"
 DEFAULT_TEXT2IMG_ENDPOINT = "/api/generate/webui/text2img/ultra"
 DEFAULT_STATUS_ENDPOINT = "/api/generate/webui/status"
+PROMPT_LIMIT = 2000
 
 
 def sign_liblib_request(
@@ -43,6 +44,12 @@ def image_size_for_ratio(aspect_ratio: str) -> dict[str, int]:
     if aspect_ratio == "16:9":
         return {"width": 1280, "height": 720}
     return {"width": 1080, "height": 1920}
+
+
+def image_size_for_request(request: ImageGenerationRequest) -> dict[str, int]:
+    if request.width and request.height:
+        return {"width": int(request.width), "height": int(request.height)}
+    return image_size_for_ratio(request.aspect_ratio)
 
 
 class LiblibImageAdapter:
@@ -107,11 +114,12 @@ class LiblibImageAdapter:
             return {"status": "failed", "error": str(exc), "provider": "liblib"}
 
     def _build_payload(self, request: ImageGenerationRequest) -> dict[str, Any]:
+        self._validate_prompt_lengths(request)
         if self.endpoint == "/api/generate/webui/text2img":
             return self._build_standard_payload(request)
         params: dict[str, Any] = {
             "prompt": request.prompt,
-            "imageSize": image_size_for_ratio(request.aspect_ratio),
+            "imageSize": image_size_for_request(request),
             "imgCount": max(1, min(int(request.img_count or 1), 4)),
         }
         return {
@@ -119,10 +127,21 @@ class LiblibImageAdapter:
             "generateParams": params,
         }
 
+    @staticmethod
+    def _validate_prompt_lengths(request: ImageGenerationRequest) -> None:
+        if len(request.prompt) > PROMPT_LIMIT:
+            raise ValueError(
+                f"prompt 超过 liblib 限制: {len(request.prompt)}/{PROMPT_LIMIT} 字符，请缩短提示词。"
+            )
+        if len(request.negative_prompt or "") > PROMPT_LIMIT:
+            raise ValueError(
+                f"negative_prompt 超过 liblib 限制: {len(request.negative_prompt)}/{PROMPT_LIMIT} 字符，请缩短负面词。"
+            )
+
     def _build_standard_payload(self, request: ImageGenerationRequest) -> dict[str, Any]:
         if not self.checkpoint_id:
             raise ValueError("LIBLIB_CHECKPOINT_ID 不能为空: 普通 WebUI 文生图需要指定基础模型。")
-        size = image_size_for_ratio(request.aspect_ratio)
+        size = image_size_for_request(request)
         params: dict[str, Any] = {
             "checkPointId": self.checkpoint_id,
             "prompt": request.prompt,

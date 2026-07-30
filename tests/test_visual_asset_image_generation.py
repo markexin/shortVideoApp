@@ -73,3 +73,96 @@ def test_visual_asset_generator_can_generate_one_scene_by_index(tmp_path):
     assert adapter.calls[0].aspect_ratio == "16:9"
     assert scenes[0].image_paths == []
     assert scenes[1].image_paths[0].endswith("scenes/002_丹房.png")
+
+
+def test_visual_asset_generator_generates_each_character_variant(tmp_path):
+    adapter = FakeImageAdapter()
+    character = Character(
+        name="林辰",
+        description="same face anchor",
+        variants=[
+            {
+                "name": "初期杂役",
+                "turnaround_prompt": "gray servant robe turnaround",
+                "consistency_prompt": "same face, gray robe",
+                "negative_prompt": "no black robe",
+            },
+            {
+                "name": "觉醒药师",
+                "turnaround_prompt": "black pharmacist robe turnaround",
+                "consistency_prompt": "same face, black robe",
+                "negative_prompt": "no gray robe",
+            },
+        ],
+    )
+    generator = VisualAssetImageGenerator(tmp_path, adapter=adapter)
+
+    results = asyncio.run(
+        generator.generate_characters(
+            characters=[character],
+            aspect_ratio="16:9",
+            img_count=1,
+        )
+    )
+
+    assert len(results) == 2
+    assert "gray servant robe turnaround" in adapter.calls[0].prompt
+    assert "black pharmacist robe turnaround" in adapter.calls[1].prompt
+    assert adapter.calls[0].output_path.endswith("characters/001_林辰/01_初期杂役/turnaround.png")
+    assert adapter.calls[1].output_path.endswith("characters/001_林辰/02_觉醒药师/turnaround.png")
+    assert character.variants[0]["image_paths"]["turnaround"][0].endswith("turnaround.png")
+
+
+def test_visual_asset_generator_can_generate_one_character_variant(tmp_path):
+    adapter = FakeImageAdapter()
+    character = Character(
+        name="林辰",
+        variants=[
+            {"name": "初期杂役", "turnaround_prompt": "gray servant robe turnaround"},
+            {"name": "觉醒药师", "turnaround_prompt": "black pharmacist robe turnaround"},
+        ],
+    )
+    generator = VisualAssetImageGenerator(tmp_path, adapter=adapter)
+
+    results = asyncio.run(
+        generator.generate_characters(
+            characters=[character],
+            aspect_ratio="16:9",
+            img_count=1,
+            index=1,
+            variant_index=2,
+        )
+    )
+
+    assert len(results) == 1
+    assert "black pharmacist robe turnaround" in adapter.calls[0].prompt
+    assert adapter.calls[0].output_path.endswith("characters/001_林辰/02_觉醒药师/turnaround.png")
+    assert "image_paths" not in character.variants[0]
+    assert character.variants[1]["image_paths"]["turnaround"][0].endswith("turnaround.png")
+
+
+def test_character_variant_prompt_stays_under_liblib_limit():
+    detailed_costume = " ".join(["silver-white robe embroidery, translucent golden soul particles"] * 25)
+    character = Character(
+        name="玄丹老祖",
+        description="外貌60余岁，清瘦仙风道骨老者，长脸清癯，白眉垂肩，慈目细长，瞳色淡金半透明。"
+        "鼻梁挺直，唇薄含笑，长须垂胸纯白如雪。银白长发披散无冠。穿白色宽袖长袍，暗绣丹炉图样，"
+        "半透明残魂形态，边缘有金色光晕粒子飘散。",
+        consistency_prompt="same face, same beard, same robe, same translucent quality",
+        variants=[
+            {
+                "name": "残魂导师",
+                "story_stage": "全剧主要形态",
+                "description": "半透明残魂形态，白色宽袖长袍暗绣丹炉，银白披发，金色粒子边缘，慈祥而严苛。",
+                "turnaround_prompt": "character turnaround reference sheet, front view, side view, back view, 60+ Chinese immortal elder, long thin kind face, white brows to shoulders, pale gold translucent eyes, long pure white beard, silver-white loose hair, white wide-sleeve robe with alchemy furnace embroidery, semi-transparent soul with golden particle edges, full body, delicate Chinese xianxia anime 3D game character design, "
+                + detailed_costume,
+                "consistency_prompt": "same exact base face, same facial proportions, same white brows and beard, same translucent soul body, same robe embroidery",
+            }
+        ],
+    )
+
+    prompt = VisualAssetImageGenerator._character_prompt(character, "turnaround", character.variants[0])
+
+    assert len(prompt) <= 1900
+    assert "残魂导师" in prompt
+    assert "same exact base face" in prompt

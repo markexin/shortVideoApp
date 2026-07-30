@@ -79,6 +79,11 @@ def test_parse_visual_asset_image_generation_commands():
     assert command.name == "generate_character_images"
     assert command.args["index"] == 1
 
+    command = parse_command("生成第1个角色第2个变体图片")
+    assert command.name == "generate_character_images"
+    assert command.args["index"] == 1
+    assert command.args["variant_index"] == 2
+
     command = parse_command("生成第2个场景图片")
     assert command.name == "generate_scene_images"
     assert command.args["index"] == 2

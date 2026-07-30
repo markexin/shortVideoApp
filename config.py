@@ -71,6 +71,9 @@ def liblib_task_config(task_type: str) -> dict:
         "cfg_scale": float(env_or(f"{prefix}CFG_SCALE", str(LIBLIB_CFG_SCALE))),
         "clip_skip": int(env_or(f"{prefix}CLIP_SKIP", str(LIBLIB_CLIP_SKIP))),
         "img_count": int(env_or(f"{prefix}IMG_COUNT", str(LIBLIB_IMG_COUNT))),
+        "aspect_ratio": env_or(f"{prefix}ASPECT_RATIO", ""),
+        "width": int(env_or(f"{prefix}WIDTH", "0")),
+        "height": int(env_or(f"{prefix}HEIGHT", "0")),
     }
 
 # ─── 默认生成参数 ───

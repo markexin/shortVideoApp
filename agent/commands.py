@@ -80,6 +80,16 @@ def parse_command(text: str) -> Command:
     if generate_match:
         return Command("generate_shot", {"shot_id": int(generate_match.group(1))})
 
+    character_variant_image_match = re.search(r"生成第\s*(\d+)\s*个角色第\s*(\d+)\s*个变体图片", raw)
+    if character_variant_image_match:
+        return Command(
+            "generate_character_images",
+            {
+                "index": int(character_variant_image_match.group(1)),
+                "variant_index": int(character_variant_image_match.group(2)),
+            },
+        )
+
     character_image_one_match = re.search(r"生成第\s*(\d+)\s*个角色图片", raw)
     if character_image_one_match:
         return Command("generate_character_images", {"index": int(character_image_one_match.group(1))})

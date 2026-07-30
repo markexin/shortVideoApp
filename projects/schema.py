@@ -10,6 +10,35 @@ def now_iso() -> str:
 
 
 @dataclass
+class CharacterVariant:
+    name: str
+    story_stage: str = ""
+    description: str = ""
+    turnaround_prompt: str = ""
+    front_view_prompt: str = ""
+    side_view_prompt: str = ""
+    back_view_prompt: str = ""
+    consistency_prompt: str = ""
+    negative_prompt: str = ""
+    image_paths: dict[str, list[str]] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "CharacterVariant":
+        return cls(
+            name=data.get("name", ""),
+            story_stage=data.get("story_stage", ""),
+            description=data.get("description", ""),
+            turnaround_prompt=data.get("turnaround_prompt", ""),
+            front_view_prompt=data.get("front_view_prompt", ""),
+            side_view_prompt=data.get("side_view_prompt", ""),
+            back_view_prompt=data.get("back_view_prompt", ""),
+            consistency_prompt=data.get("consistency_prompt", ""),
+            negative_prompt=data.get("negative_prompt", ""),
+            image_paths=dict(data.get("image_paths", {})),
+        )
+
+
+@dataclass
 class Character:
     name: str
     description: str = ""
@@ -21,6 +50,7 @@ class Character:
     consistency_prompt: str = ""
     negative_prompt: str = ""
     image_paths: dict[str, list[str]] = field(default_factory=dict)
+    variants: list[CharacterVariant] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Character":
@@ -35,6 +65,10 @@ class Character:
             consistency_prompt=data.get("consistency_prompt", ""),
             negative_prompt=data.get("negative_prompt", ""),
             image_paths=dict(data.get("image_paths", {})),
+            variants=[
+                item if isinstance(item, CharacterVariant) else CharacterVariant.from_dict(item)
+                for item in data.get("variants", [])
+            ],
         )
 
 

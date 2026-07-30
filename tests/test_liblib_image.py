@@ -149,6 +149,58 @@ def test_liblib_adapter_uses_requested_image_count_and_downloads_all_images(tmp_
     assert (tmp_path / "hero_02.png").read_bytes() == b"shot-b.png"
 
 
+def test_liblib_adapter_uses_explicit_request_size(tmp_path):
+    session = FakeSession()
+    adapter = LiblibImageAdapter(
+        access_key="ak",
+        secret_key="sk",
+        template_uuid="tpl-1",
+        session=session,
+        poll_interval=0,
+        timeout=5,
+    )
+    request = ImageGenerationRequest(
+        shot_id=1,
+        prompt="hero",
+        negative_prompt="",
+        aspect_ratio="9:16",
+        output_path=str(tmp_path / "hero.png"),
+        width=1664,
+        height=928,
+    )
+
+    asyncio.run(adapter.generate_image(request))
+
+    assert session.posts[0]["json"]["generateParams"]["imageSize"] == {"width": 1664, "height": 928}
+
+
+def test_liblib_adapter_reports_prompt_too_long_before_submit(tmp_path):
+    session = FakeSession()
+    adapter = LiblibImageAdapter(
+        access_key="ak",
+        secret_key="sk",
+        template_uuid="tpl-1",
+        endpoint="/api/generate/webui/text2img",
+        checkpoint_id="checkpoint-uuid",
+        session=session,
+        poll_interval=0,
+        timeout=5,
+    )
+    request = ImageGenerationRequest(
+        shot_id=1,
+        prompt="x" * 2001,
+        negative_prompt="",
+        aspect_ratio="9:16",
+        output_path=str(tmp_path / "hero.png"),
+    )
+
+    result = asyncio.run(adapter.generate_image(request))
+
+    assert result["status"] == "failed"
+    assert "prompt 超过 liblib 限制" in result["error"]
+    assert session.posts == []
+
+
 def test_liblib_adapter_builds_standard_webui_payload_with_checkpoint_and_lora(tmp_path):
     session = FakeSession()
     adapter = LiblibImageAdapter(

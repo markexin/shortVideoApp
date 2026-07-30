@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 
 from pipeline.image_generator import ImageAdapter, ImageGenerationRequest
-from pipeline.visual_style import with_reference_negative, with_reference_style
+from pipeline.visual_style import compact_character_identity_lock, with_reference_negative, with_reference_style
 from projects.schema import Character, VisualAsset
 
 
@@ -20,15 +20,40 @@ class VisualAssetImageGenerator:
         aspect_ratio: str,
         limit: int | None = None,
         index: int | None = None,
+        variant_index: int | None = None,
         img_count: int = 1,
         view: str = "turnaround",
+        width: int | None = None,
+        height: int | None = None,
     ) -> list[dict]:
         selected = self._select(characters, limit=limit, index=index)
         tasks = [
-            self._generate_character(order, character, aspect_ratio, img_count, view)
+            task
             for order, character in selected
+            for task in self._character_tasks(order, character, aspect_ratio, img_count, view, width, height, variant_index)
         ]
         return await asyncio.gather(*tasks) if tasks else []
+
+    def _character_tasks(
+        self,
+        order: int,
+        character: Character,
+        aspect_ratio: str,
+        img_count: int,
+        view: str,
+        width: int | None,
+        height: int | None,
+        variant_index: int | None,
+    ) -> list:
+        if not character.variants:
+            return [self._generate_character(order, character, None, 0, aspect_ratio, img_count, view, width, height)]
+        variants = list(enumerate(character.variants, start=1))
+        if variant_index is not None:
+            variants = [(order, variant) for order, variant in variants if order == variant_index]
+        return [
+            self._generate_character(order, character, variant, variant_index, aspect_ratio, img_count, view, width, height)
+            for variant_index, variant in variants
+        ]
 
     async def generate_assets(
         self,
@@ -38,11 +63,13 @@ class VisualAssetImageGenerator:
         limit: int | None = None,
         index: int | None = None,
         img_count: int = 1,
+        width: int | None = None,
+        height: int | None = None,
     ) -> list[dict]:
         selected_assets = [asset for asset in assets if asset.category == category]
         selected = self._select(selected_assets, limit=limit, index=index)
         tasks = [
-            self._generate_asset(order, asset, aspect_ratio, img_count)
+            self._generate_asset(order, asset, aspect_ratio, img_count, width, height)
             for order, asset in selected
         ]
         return await asyncio.gather(*tasks) if tasks else []
@@ -51,28 +78,35 @@ class VisualAssetImageGenerator:
         self,
         order: int,
         character: Character,
+        variant: dict | None,
+        variant_index: int,
         aspect_ratio: str,
         img_count: int,
         view: str,
+        width: int | None,
+        height: int | None,
     ) -> dict:
-        prompt = self._character_prompt(character, view)
-        output_path = (
-            self.output_dir
-            / "characters"
-            / f"{order:03d}_{safe_name(character.name)}"
-            / f"{view}.png"
-        )
+        prompt = self._character_prompt(character, view, variant=variant)
+        character_dir = self.output_dir / "characters" / f"{order:03d}_{safe_name(character.name)}"
+        if variant:
+            character_dir = character_dir / f"{variant_index:02d}_{safe_name(str(_variant_get(variant, 'name', 'variant')))}"
+        output_path = character_dir / f"{view}.png"
         request = ImageGenerationRequest(
             shot_id=order,
             prompt=prompt,
-            negative_prompt=with_reference_negative(character.negative_prompt),
+            negative_prompt=with_reference_negative(self._character_negative_prompt(character, variant)),
             aspect_ratio=aspect_ratio,
             output_path=str(output_path),
             img_count=img_count,
+            width=width,
+            height=height,
         )
         result = await self.adapter.generate_image(request)
         if result.get("status") == "success":
-            character.image_paths[view] = result.get("local_paths") or [result.get("local_path")]
+            if variant is not None:
+                _variant_image_paths(variant)[view] = result.get("local_paths") or [result.get("local_path")]
+            else:
+                character.image_paths[view] = result.get("local_paths") or [result.get("local_path")]
         return result
 
     async def _generate_asset(
@@ -81,6 +115,8 @@ class VisualAssetImageGenerator:
         asset: VisualAsset,
         aspect_ratio: str,
         img_count: int,
+        width: int | None,
+        height: int | None,
     ) -> dict:
         plural = "scenes" if asset.category == "scene" else "props"
         output_path = self.output_dir / plural / f"{order:03d}_{safe_name(asset.name)}.png"
@@ -91,6 +127,8 @@ class VisualAssetImageGenerator:
             aspect_ratio=aspect_ratio,
             output_path=str(output_path),
             img_count=img_count,
+            width=width,
+            height=height,
         )
         result = await self.adapter.generate_image(request)
         if result.get("status") == "success":
@@ -98,15 +136,39 @@ class VisualAssetImageGenerator:
         return result
 
     @staticmethod
-    def _character_prompt(character: Character, view: str) -> str:
+    def _character_prompt(character: Character, view: str, variant: dict | None = None) -> str:
+        source = variant
         prompts = {
-            "turnaround": character.turnaround_prompt,
-            "front": character.front_view_prompt,
-            "side": character.side_view_prompt,
-            "back": character.back_view_prompt,
+            "turnaround": _variant_get(source, "turnaround_prompt") or character.turnaround_prompt,
+            "front": _variant_get(source, "front_view_prompt") or character.front_view_prompt,
+            "side": _variant_get(source, "side_view_prompt") or character.side_view_prompt,
+            "back": _variant_get(source, "back_view_prompt") or character.back_view_prompt,
         }
         prompt = prompts.get(view) or character.turnaround_prompt or character.style_prompt or character.description
-        return with_reference_style(prompt, category="character")
+        variant_description = _variant_get(source, "description")
+        variant_consistency = _variant_get(source, "consistency_prompt")
+        locked_prompt = " ".join(
+            [
+                f"Variant: {_variant_get(source, 'name')}. Story stage: {_variant_get(source, 'story_stage')}." if source else "",
+                prompt,
+                f"Variant-specific visual anchor: {variant_description}" if variant_description else "",
+                compact_character_identity_lock(
+                    character_name=character.name,
+                    description=character.description,
+                    consistency_prompt="; ".join(
+                        part for part in [character.consistency_prompt, variant_consistency] if part
+                    ),
+                ),
+            ]
+        )
+        return _clip_generation_prompt(with_reference_style(locked_prompt, category="character"))
+
+    @staticmethod
+    def _character_negative_prompt(character: Character, variant: dict | None = None) -> str:
+        parts = [character.negative_prompt]
+        if variant:
+            parts.append(str(_variant_get(variant, "negative_prompt", "")))
+        return ", ".join(part for part in parts if part)
 
     @staticmethod
     def _asset_prompt(asset: VisualAsset) -> str:
@@ -126,3 +188,27 @@ class VisualAssetImageGenerator:
 def safe_name(name: str) -> str:
     cleaned = re.sub(r"[\\/:*?\"<>|\\s]+", "_", name.strip())
     return cleaned.strip("_") or "asset"
+
+
+def _variant_get(variant, key: str, default: str = ""):
+    if variant is None:
+        return default
+    if isinstance(variant, dict):
+        return variant.get(key, default)
+    return getattr(variant, key, default)
+
+
+def _variant_image_paths(variant) -> dict[str, list[str]]:
+    if isinstance(variant, dict):
+        return variant.setdefault("image_paths", {})
+    if not getattr(variant, "image_paths", None):
+        variant.image_paths = {}
+    return variant.image_paths
+
+
+def _clip_generation_prompt(prompt: str, max_chars: int = 1900) -> str:
+    if len(prompt) <= max_chars:
+        return prompt
+    head_chars = max_chars - 650
+    tail_chars = 620
+    return f"{prompt[:head_chars].rstrip()} ... {prompt[-tail_chars:].lstrip()}"

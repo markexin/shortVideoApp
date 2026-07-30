@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from projects.schema import Character, Shot
-from pipeline.visual_style import REFERENCE_STYLE, with_reference_negative
+from pipeline.visual_style import REFERENCE_STYLE, character_identity_lock, with_reference_negative
 
 
 def build_image_prompt(
@@ -21,6 +21,13 @@ def build_image_prompt(
             consistency_parts.append(f"{name}: {character.description}")
         if character.consistency_prompt:
             consistency_parts.append(character.consistency_prompt)
+        consistency_parts.append(
+            character_identity_lock(
+                character_name=name,
+                description=character.description,
+                consistency_prompt=character.consistency_prompt,
+            )
+        )
         if character.negative_prompt:
             negative_parts.append(character.negative_prompt)
 
