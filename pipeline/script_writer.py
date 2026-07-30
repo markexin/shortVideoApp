@@ -151,6 +151,7 @@ def generate_script_reflectively(
     on_progress: Callable[[ScriptProgressEvent], None] | None = None,
     on_checkpoint: Callable[[ScriptGenerationCheckpoint], None] | None = None,
     resume_from: ScriptGenerationCheckpoint | None = None,
+    machine_review: Callable[[str], str | None] | None = None,
 ) -> ReflectiveScriptResult:
     client = client or create_llm_client()
     planned_rounds = max(1, max_rounds)
@@ -232,6 +233,22 @@ def generate_script_reflectively(
             "质检官会挑战剧情结构、教育意义、角色动机和画面可执行性。",
         )
         reflection = _reflect_on_script(client, user_prompt, script)
+        machine_feedback = machine_review(script) if machine_review else None
+        if _reflection_passed(reflection) and machine_feedback:
+            reflection = (
+                "FAIL\n"
+                "总分: 0\n"
+                "理由:\n"
+                "人工质检虽通过，但机器结构校验未通过。\n"
+                "核心问题:\n"
+                f"{machine_feedback}\n"
+                "建设性修改建议:\n"
+                "必须优先修复机器结构校验问题，再保留原有剧情质量优点。\n"
+                "下一轮改写重点:\n"
+                f"{machine_feedback}\n\n"
+                "人工质检原文:\n"
+                f"{reflection.strip()}"
+            )
         reflections.append(reflection)
         completed_steps += 1
         checkpoint("reflection_saved", round_number + 1)

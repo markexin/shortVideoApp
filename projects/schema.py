@@ -13,16 +13,53 @@ def now_iso() -> str:
 class Character:
     name: str
     description: str = ""
+    style_prompt: str = ""
+    turnaround_prompt: str = ""
+    front_view_prompt: str = ""
+    side_view_prompt: str = ""
+    back_view_prompt: str = ""
     consistency_prompt: str = ""
     negative_prompt: str = ""
+    image_paths: dict[str, list[str]] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Character":
         return cls(
             name=data.get("name", ""),
             description=data.get("description", ""),
+            style_prompt=data.get("style_prompt", ""),
+            turnaround_prompt=data.get("turnaround_prompt", ""),
+            front_view_prompt=data.get("front_view_prompt", ""),
+            side_view_prompt=data.get("side_view_prompt", ""),
+            back_view_prompt=data.get("back_view_prompt", ""),
             consistency_prompt=data.get("consistency_prompt", ""),
             negative_prompt=data.get("negative_prompt", ""),
+            image_paths=dict(data.get("image_paths", {})),
+        )
+
+
+@dataclass
+class VisualAsset:
+    category: str
+    name: str
+    description: str = ""
+    style_prompt: str = ""
+    image_prompt: str = ""
+    negative_prompt: str = ""
+    purpose: str = ""
+    image_paths: list[str] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "VisualAsset":
+        return cls(
+            category=data.get("category", ""),
+            name=data.get("name", ""),
+            description=data.get("description", ""),
+            style_prompt=data.get("style_prompt", ""),
+            image_prompt=data.get("image_prompt", ""),
+            negative_prompt=data.get("negative_prompt", ""),
+            purpose=data.get("purpose", ""),
+            image_paths=list(data.get("image_paths", [])),
         )
 
 
@@ -66,6 +103,7 @@ class Project:
     premise: str = ""
     genre: str = ""
     platform: str = ""
+    aspect_ratio: str = "9:16"
     episode_count: int = 6
     seconds_per_episode: int = 60
     audience: str = "3-8岁儿童"
@@ -75,6 +113,7 @@ class Project:
     script_generation: dict[str, Any] = field(default_factory=dict)
     current_step: str = "home"
     characters: list[Character] = field(default_factory=list)
+    visual_assets: list[VisualAsset] = field(default_factory=list)
     shots: list[Shot] = field(default_factory=list)
     created_at: str = field(default_factory=now_iso)
     updated_at: str = field(default_factory=now_iso)
@@ -90,6 +129,7 @@ class Project:
             premise=data.get("premise", ""),
             genre=data.get("genre", ""),
             platform=data.get("platform", ""),
+            aspect_ratio=data.get("aspect_ratio", "9:16"),
             episode_count=int(data.get("episode_count", 6)),
             seconds_per_episode=int(data.get("seconds_per_episode", 60)),
             audience=data.get("audience", "3-8岁儿童"),
@@ -100,6 +140,9 @@ class Project:
             current_step=data.get("current_step", "home"),
             characters=[
                 Character.from_dict(item) for item in data.get("characters", [])
+            ],
+            visual_assets=[
+                VisualAsset.from_dict(item) for item in data.get("visual_assets", [])
             ],
             shots=[Shot.from_dict(item) for item in data.get("shots", [])],
             created_at=data.get("created_at", now_iso()),

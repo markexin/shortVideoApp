@@ -32,6 +32,46 @@ WORKFLOW_ENDPOINT = os.getenv("WORKFLOW_ENDPOINT", "")
 # ComfyUI 本地服务默认地址: http://127.0.0.1:8188
 COMFYUI_BASE_URL = os.getenv("COMFYUI_BASE_URL", "http://127.0.0.1:8188")
 COMFYUI_WORKFLOW_PATH = os.getenv("COMFYUI_WORKFLOW_PATH", "")
+COMFYUI_IMAGE_WORKFLOW_PATH = os.getenv("COMFYUI_IMAGE_WORKFLOW_PATH", "")
+
+# 图片生成工作流: comfyui | liblib
+IMAGE_PROVIDER = os.getenv("IMAGE_PROVIDER", "comfyui").lower()
+
+# liblib.art OpenAPI 文生图配置
+LIBLIB_ACCESS_KEY = os.getenv("LIBLIB_ACCESS_KEY", "")
+LIBLIB_SECRET_KEY = os.getenv("LIBLIB_SECRET_KEY", "")
+LIBLIB_BASE_URL = os.getenv("LIBLIB_BASE_URL", "https://openapi.liblibai.cloud")
+LIBLIB_IMAGE_ENDPOINT = os.getenv("LIBLIB_IMAGE_ENDPOINT", "/api/generate/webui/text2img/ultra")
+LIBLIB_STATUS_ENDPOINT = os.getenv("LIBLIB_STATUS_ENDPOINT", "/api/generate/webui/status")
+LIBLIB_TEMPLATE_UUID = os.getenv("LIBLIB_TEMPLATE_UUID", "")
+LIBLIB_POLL_INTERVAL = float(os.getenv("LIBLIB_POLL_INTERVAL", "3"))
+LIBLIB_CHECKPOINT_ID = os.getenv("LIBLIB_CHECKPOINT_ID", "")
+LIBLIB_LORA_MODEL_ID = os.getenv("LIBLIB_LORA_MODEL_ID", "")
+LIBLIB_LORA_WEIGHT = float(os.getenv("LIBLIB_LORA_WEIGHT", "0.8"))
+LIBLIB_SAMPLER = int(os.getenv("LIBLIB_SAMPLER", "15"))
+LIBLIB_STEPS = int(os.getenv("LIBLIB_STEPS", "24"))
+LIBLIB_CFG_SCALE = float(os.getenv("LIBLIB_CFG_SCALE", "7"))
+LIBLIB_CLIP_SKIP = int(os.getenv("LIBLIB_CLIP_SKIP", "2"))
+LIBLIB_IMG_COUNT = int(os.getenv("LIBLIB_IMG_COUNT", "1"))
+
+
+def liblib_task_config(task_type: str) -> dict:
+    prefix = f"LIBLIB_{task_type.upper()}_"
+    def env_or(name: str, default: str) -> str:
+        return os.getenv(name) or default
+
+    return {
+        "endpoint": env_or(f"{prefix}IMAGE_ENDPOINT", LIBLIB_IMAGE_ENDPOINT),
+        "template_uuid": env_or(f"{prefix}TEMPLATE_UUID", LIBLIB_TEMPLATE_UUID),
+        "checkpoint_id": env_or(f"{prefix}CHECKPOINT_ID", LIBLIB_CHECKPOINT_ID),
+        "lora_model_id": env_or(f"{prefix}LORA_MODEL_ID", LIBLIB_LORA_MODEL_ID),
+        "lora_weight": float(env_or(f"{prefix}LORA_WEIGHT", str(LIBLIB_LORA_WEIGHT))),
+        "sampler": int(env_or(f"{prefix}SAMPLER", str(LIBLIB_SAMPLER))),
+        "steps": int(env_or(f"{prefix}STEPS", str(LIBLIB_STEPS))),
+        "cfg_scale": float(env_or(f"{prefix}CFG_SCALE", str(LIBLIB_CFG_SCALE))),
+        "clip_skip": int(env_or(f"{prefix}CLIP_SKIP", str(LIBLIB_CLIP_SKIP))),
+        "img_count": int(env_or(f"{prefix}IMG_COUNT", str(LIBLIB_IMG_COUNT))),
+    }
 
 # ─── 默认生成参数 ───
 DEFAULT_RESOLUTION = "1080p"
@@ -70,5 +110,6 @@ MUSIC_LIBRARY = {
 # ─── 并发/调度 ───
 MAX_CONCURRENT_GENERATIONS = 3
 GENERATION_TIMEOUT = 600       # 单个镜头最长等待 10 分钟 (I2V 比 T2V 慢, 需更多时间)
+LIBLIB_TIMEOUT = int(os.getenv("LIBLIB_TIMEOUT", str(GENERATION_TIMEOUT)))
 MAX_RETRIES_PER_SHOT = 3
 DOWNLOAD_IMMEDIATELY = True    # 生成后立即下载 (URL 24h 过期)

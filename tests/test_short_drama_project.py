@@ -19,6 +19,7 @@ def test_project_manager_creates_and_reloads_project():
             genre="都市逆袭",
             platform="douyin",
             premise="一个药师被仙门羞辱后逆袭",
+            aspect_ratio="16:9",
         )
         project.script = "第一集：主角被羞辱后反击。"
         project.script_units = [{"episode": 1, "content": "第一集：主角被羞辱后反击。"}]
@@ -44,6 +45,7 @@ def test_project_manager_creates_and_reloads_project():
         assert reloaded.genre == "都市逆袭"
         assert reloaded.platform == "douyin"
         assert reloaded.premise == "一个药师被仙门羞辱后逆袭"
+        assert reloaded.aspect_ratio == "16:9"
         assert reloaded.script.startswith("第一集")
         assert reloaded.script_units[0]["episode"] == 1
         assert reloaded.script_generation["next_round"] == 2

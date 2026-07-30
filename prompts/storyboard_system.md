@@ -5,6 +5,20 @@
 
 ---
 
+## 统一视觉风格：仙侠 CG 参考图
+
+当项目是仙侠、古风、修仙、玄幻或短剧人物资产时，所有人物、场景、道具、分镜 prompt 必须统一到以下参考风格：
+
+`high-end xianxia fantasy CG, refined Chinese anime 3D game cinematic style, beautiful immortal drama aesthetic, porcelain skin, delicate facial features, glossy black hair, elegant flowing hanfu or polished silver-white fantasy armor, soft blue-white lighting, luminous rim light, shallow depth of field, sparkling particles, crystal highlights, ultra-detailed hair strands, clean cool color palette, ethereal immortal aura`
+
+人物近景必须强调：精致五官、冷白蓝柔光、黑色高马尾或长发细节、瓷白皮肤、银白/玉质高光、仙气但不 Q 版。
+
+场景必须强调：仙门、云雾、玉石、银白高光、灵光粒子、冷白蓝色调、干净高级的 3D 动画质感。
+
+负面提示必须规避：`low quality, lowres, blurry, noisy, watermark, logo, text, UI overlay, western medieval style, flat cartoon, chibi, ugly face, face drift, inconsistent identity, outfit drift, deformed hands, extra fingers, bad anatomy`
+
+---
+
 ## 🎯 第一原则：创意优先
 
 在考虑任何技术细节之前，先完成创意设计：

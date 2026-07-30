@@ -23,10 +23,37 @@ def test_validate_script_rejects_reasoning_leak_and_mismatched_plan():
     result = validate_script_completeness(project)
 
     assert not result.is_complete
+    assert result.episode_count == 1
+    assert result.missing_episodes == list(range(2, 31))
     assert "包含模型思考内容" in result.issues
     assert "脚本集数与项目设定不一致" in result.issues
     assert "脚本单集时长与项目设定不一致" in result.issues
     assert "分集内容不足" in result.issues
+
+
+def test_validate_script_reports_duplicate_episode_numbers():
+    project = Project(
+        project_id="p3",
+        title="测试剧",
+        episode_count=3,
+        seconds_per_episode=240,
+        script="""
+### 第1集 开始
+一
+### 第2集 中段A
+二
+### 第2集 中段B
+二重复
+""",
+    )
+
+    result = validate_script_completeness(project)
+
+    assert result.fragment_count == 3
+    assert result.episode_count == 2
+    assert result.duplicate_episodes == [2]
+    assert result.missing_episodes == [3]
+    assert "存在重复集数" in result.issues
 
 
 def test_split_script_units_extracts_episode_array_for_validation():
@@ -41,11 +68,14 @@ def test_split_script_units_extracts_episode_array_for_validation():
 
 ## 第2集完整脚本
 第二集内容
+
+### 第3集 新标题格式
+第三集内容
 """
 
     units = split_script_units(script)
 
-    assert [unit["episode"] for unit in units] == [1, 2]
+    assert [unit["episode"] for unit in units] == [1, 2, 3]
     assert units[0]["content"].startswith("## 六、第1集完整脚本")
 
 

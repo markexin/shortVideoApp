@@ -37,3 +37,32 @@ def test_agent_exports_image_prompts_for_current_project():
         content = prompt_file.read_text(encoding="utf-8")
         assert "same woman" in content
         assert "vertical office medium shot" in content
+
+
+def test_agent_exports_image_task_manifest_and_imports_image_directory():
+    with tempfile.TemporaryDirectory() as tmp:
+        agent = ShortDramaAgent(Path(tmp))
+        project = agent.manager.create_project("测试剧")
+        project.characters = [
+            Character(name="林晚", consistency_prompt="same woman")
+        ]
+        project.shots = [
+            Shot(shot_id=1, scene_description="办公室", image_prompt="shot one"),
+            Shot(shot_id=2, scene_description="街道", image_prompt="shot two"),
+        ]
+        agent.manager.save_project(project)
+        agent.current_project = project
+
+        manifest = agent.export_image_task_manifest()
+        image_dir = Path(tmp) / "generated_images"
+        image_dir.mkdir()
+        (image_dir / "shot_001.png").write_bytes(b"fake")
+        (image_dir / "shot_002.jpg").write_bytes(b"fake")
+
+        bound_count = agent.import_shot_images_from_dir(image_dir)
+
+        assert manifest.name == "image_tasks.md"
+        assert "第 1 镜" in manifest.read_text(encoding="utf-8")
+        assert bound_count == 2
+        assert project.shots[0].image_path.endswith("shot_001.png")
+        assert project.shots[1].status == "image_ready"

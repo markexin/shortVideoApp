@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from projects.schema import Character, Shot
+from pipeline.visual_style import REFERENCE_STYLE, with_reference_negative
 
 
 def build_image_prompt(
@@ -25,6 +26,7 @@ def build_image_prompt(
 
     if shot.negative_prompt:
         negative_parts.append(shot.negative_prompt)
+    negative_parts.append(with_reference_negative(""))
 
     prompt_parts = [
         f"Shot {shot.shot_id}",
@@ -32,7 +34,7 @@ def build_image_prompt(
         f"Action: {shot.action}",
         f"Composition prompt: {shot.image_prompt}",
         f"Aspect ratio: {aspect_ratio}",
-        "Style: realistic vertical short drama, cinematic lighting, high detail",
+        f"Style: {REFERENCE_STYLE}",
     ]
 
     if consistency_parts:

@@ -165,3 +165,34 @@ def test_generate_script_reflectively_can_resume_from_checkpoint():
     assert len(result.reflections) == 2
     assert len(client.chat.completions.calls) == 2
     assert checkpoints[-1].status == "completed"
+
+
+def test_generate_script_reflectively_forces_rewrite_when_machine_review_fails():
+    client = FakeClient()
+    client.chat.completions.outputs = [
+        "缺第30集且重复第25集的脚本",
+        "PASS\n总分: 91\n理由: 人工质检通过",
+        "补齐第30集并修复重复后的脚本",
+        "PASS\n总分: 92\n理由: 结构和内容均通过",
+    ]
+    review_calls = []
+
+    def machine_review(script):
+        review_calls.append(script)
+        if "补齐第30集" in script:
+            return None
+        return "机器结构校验未通过: 唯一集数 29/30；缺失集数 30；重复集数 25。必须补齐缺失集并修复重复编号。"
+
+    result = generate_script_reflectively(
+        premise="修仙短剧",
+        genre="修仙短剧",
+        platform="manual",
+        episode_count=30,
+        seconds_per_episode=240,
+        client=client,
+        machine_review=machine_review,
+    )
+
+    assert result.script == "补齐第30集并修复重复后的脚本"
+    assert any("机器结构校验未通过" in reflection for reflection in result.reflections)
+    assert "机器结构校验未通过" in client.chat.completions.calls[2]["messages"][1]["content"]

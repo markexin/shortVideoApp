@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 from rich.console import Console
@@ -12,15 +13,21 @@ import config
 from agent.commands import Command, parse_contextual_command
 from agent.state_machine import available_actions, can_transition
 from agent.terminal_input import read_text
-from pipeline.character_bible import generate_character_bible
+from pipeline.character_bible import VisualBible, generate_visual_bible
 from pipeline.drama_storyboard import generate_drama_storyboard
 from pipeline.episode_assembler import assemble_episode
 from pipeline.generator import VideoGenerator
+from pipeline.image_generator import ShotImageGenerator
 from pipeline.prompt_builder import build_image_prompt
+from pipeline.script_structure_repair import repair_episode_numbering
 from pipeline.script_writer import ScriptGenerationCheckpoint, generate_script_reflectively
 from pipeline.script_validator import validate_script_completeness
+from pipeline.visual_asset_image_generator import VisualAssetImageGenerator
+from pipeline.visual_style import with_reference_negative, with_reference_style
 from projects.manager import ProjectManager
 from projects.schema import Character, Project, Shot, now_iso
+from workflows.comfyui_image import ComfyUIImageAdapter, validate_image_workflow
+from workflows.liblib_image import LiblibImageAdapter
 
 
 console = Console()
@@ -35,6 +42,7 @@ def normalize_new_project_fields(
     minutes_per_episode: str = "",
     audience: str = "",
     pacing_style: str = "",
+    aspect_ratio: str = "",
 ) -> dict[str, str]:
     normalized_premise = premise.strip()
     try:
@@ -46,11 +54,15 @@ def normalize_new_project_fields(
     except ValueError:
         minutes = 1
     seconds_per_episode = max(15, int(minutes * 60))
+    normalized_ratio = aspect_ratio.strip().replace("：", ":") or "9:16"
+    if normalized_ratio not in {"9:16", "16:9"}:
+        normalized_ratio = "9:16"
     return {
         "premise": normalized_premise,
         "title": title.strip() or normalized_premise[:20] or "未命名短剧",
         "genre": genre.strip() or "儿童教育短剧",
         "platform": platform.strip() or "manual",
+        "aspect_ratio": normalized_ratio,
         "episode_count": normalized_episode_count,
         "seconds_per_episode": seconds_per_episode,
         "audience": audience.strip() or "3-8岁儿童",
@@ -97,6 +109,12 @@ class ShortDramaAgent:
             "generate_characters": self._handle_generate_characters,
             "generate_storyboard": self._handle_generate_storyboard,
             "export_image_prompts": self._handle_export_image_prompts,
+            "show_image_tasks": self._handle_show_image_tasks,
+            "generate_images": self._handle_generate_images,
+            "generate_character_images": self._handle_generate_character_images,
+            "generate_scene_images": self._handle_generate_scene_images,
+            "generate_prop_images": self._handle_generate_prop_images,
+            "import_image_dir": self._handle_import_image_dir,
             "assemble_episode": self._handle_assemble_episode,
             "set_shot_image": self._handle_set_shot_image,
             "generate_shot": self._handle_generate_shot,
@@ -137,6 +155,9 @@ class ShortDramaAgent:
         if not validation.is_complete:
             console.print("[yellow]检测到当前脚本不完整，将按项目设定继续修复/重新生成。[/yellow]")
             self._print_script_validation(validation)
+            if self._repair_script_structure(project, validation):
+                self._print_project_menu()
+                return
         self._generate_project_script(project, resume=has_checkpoint)
 
     def _handle_new_project(self, command: Command) -> None:
@@ -180,6 +201,7 @@ class ShortDramaAgent:
         console.print(f"角色: {len(project.characters)} 个，分镜: {len(project.shots)} 个")
         ready = sum(1 for shot in project.shots if shot.image_path)
         console.print(f"已绑定图片: {ready}/{len(project.shots)}")
+        self._print_script_validation_detail(project)
         self._print_script_preview(project, max_lines=12)
         self._print_characters(project)
         self._print_storyboard(project)
@@ -224,6 +246,7 @@ class ShortDramaAgent:
         minutes_per_episode = read_text(f"每集分钟数 [{minutes:g}]: ").strip() or f"{minutes:g}"
         audience = read_text(f"目标受众 [{project.audience}]: ").strip() or project.audience
         pacing_style = read_text(f"节奏风格 [{project.pacing_style}]: ").strip() or project.pacing_style
+        aspect_ratio = read_text(f"画幅 9:16/16:9 [{project.aspect_ratio}]: ").strip() or project.aspect_ratio
         platform = read_text(f"平台 [{project.platform}]: ").strip() or project.platform
 
         fields = normalize_new_project_fields(
@@ -235,10 +258,12 @@ class ShortDramaAgent:
             minutes_per_episode=minutes_per_episode,
             audience=audience,
             pacing_style=pacing_style,
+            aspect_ratio=aspect_ratio,
         )
         project.title = fields["title"]
         project.genre = fields["genre"]
         project.platform = fields["platform"]
+        project.aspect_ratio = fields["aspect_ratio"]
         project.episode_count = fields["episode_count"]
         project.seconds_per_episode = fields["seconds_per_episode"]
         project.audience = fields["audience"]
@@ -293,17 +318,29 @@ class ShortDramaAgent:
             return
         console.print("[cyan]开始生成角色圣经...[/cyan]")
         try:
-            with console.status("[cyan]正在调用 LLM 生成角色圣经，请稍候...[/cyan]", spinner="dots"):
-                project.characters = generate_character_bible(project.script)
+            with console.status("[cyan]正在调用 LLM 生成视觉资产圣经，请稍候...[/cyan]", spinner="dots"):
+                visual_bible = generate_visual_bible(project.script, aspect_ratio=project.aspect_ratio)
         except Exception as exc:
             console.print(f"[red]角色圣经生成失败:[/red] {exc}")
             self._print_project_menu()
             return
+        self._print_visual_bible_for_confirmation(visual_bible)
+        confirm = read_text("确认保存以上角色/场景/道具提示词？输入 y 保存 [n]: ").strip().lower()
+        if confirm != "y":
+            console.print("已取消保存。你可以稍后重新输入 `生成角色` 再生成。")
+            self._print_project_menu()
+            return
+        project.characters = visual_bible.characters
+        project.visual_assets = visual_bible.assets
         if not self._advance_step("characters_ready"):
             return
         project.updated_at = now_iso()
         self.manager.save_project(project)
-        console.print(f"[green]角色圣经已生成:[/green] {len(project.characters)} 个角色。下一步输入 `生成分镜`。")
+        self._save_visual_bible_prompts(project)
+        console.print(
+            f"[green]视觉资产圣经已保存:[/green] {len(project.characters)} 个角色，"
+            f"{len(visual_bible.scenes)} 个场景，{len(visual_bible.props)} 个道具。下一步输入 `生成分镜`。"
+        )
         self._print_project_menu()
 
     def _handle_generate_storyboard(self, command: Command) -> None:
@@ -321,7 +358,7 @@ class ShortDramaAgent:
                 project.shots = generate_drama_storyboard(
                     project.script,
                     project.characters,
-                    aspect_ratio=config.DEFAULT_RATIO,
+                    aspect_ratio=project.aspect_ratio,
                 )
         except Exception as exc:
             console.print(f"[red]分镜生成失败:[/red] {exc}")
@@ -336,6 +373,208 @@ class ShortDramaAgent:
 
     def _handle_export_image_prompts(self, command: Command) -> None:
         self.export_image_prompts()
+
+    def _handle_show_image_tasks(self, command: Command) -> None:
+        project = self._require_project()
+        if not project:
+            return
+        manifest = self.export_image_task_manifest()
+        ready = sum(1 for shot in project.shots if shot.image_path)
+        console.print(f"[cyan]图片任务表:[/cyan] {manifest}")
+        console.print(f"图片准备进度: {ready}/{len(project.shots)}")
+        table = Table(title="图片任务预览")
+        table.add_column("镜头", justify="right")
+        table.add_column("状态")
+        table.add_column("场景")
+        table.add_column("Prompt文件")
+        rows = project.shots[:12]
+        prompt_dir = self.manager.project_dir(project.project_id) / "prompts"
+        for shot in rows:
+            table.add_row(
+                str(shot.shot_id),
+                "已绑定" if shot.image_path else "待生成",
+                shot.scene_description[:36],
+                str(prompt_dir / f"shot_{shot.shot_id:03d}_image_prompt.txt"),
+            )
+        console.print(table)
+        if len(project.shots) > len(rows):
+            console.print(f"... 还有 {len(project.shots) - len(rows)} 个图片任务，详见任务表。")
+        self._print_project_menu()
+
+    def _handle_generate_images(self, command: Command) -> None:
+        project = self._require_project()
+        if not project:
+            return
+        adapter = self._create_image_adapter("shot")
+        if not adapter:
+            self._print_project_menu()
+            return
+        output_dir = self.manager.project_dir(project.project_id) / "images" / "shots"
+        task_config = config.liblib_task_config("shot") if getattr(config, "IMAGE_PROVIDER", "comfyui") == "liblib" else {"img_count": 1}
+        generator = ShotImageGenerator(output_dir=output_dir, adapter=adapter, img_count=task_config["img_count"])
+        provider = getattr(config, "IMAGE_PROVIDER", "comfyui")
+        console.print(f"[cyan]开始调用 {provider} 生成分镜图片...[/cyan]")
+        results = asyncio.run(
+            generator.generate_all(
+                shots=project.shots,
+                characters=project.characters,
+                aspect_ratio=project.aspect_ratio,
+            )
+        )
+        success = sum(1 for result in results if result.get("status") == "success")
+        failed = len(results) - success
+        project.updated_at = now_iso()
+        self.manager.save_project(project)
+        console.print(f"[green]图片生成完成:[/green] 成功 {success}，失败 {failed}。")
+        if failed:
+            for result in results:
+                if result.get("status") != "success":
+                    console.print(f"[red]失败:[/red] {result.get('error')}")
+        self._print_project_menu()
+
+    def _handle_generate_character_images(self, command: Command) -> None:
+        self._generate_visual_asset_images("character", command)
+
+    def _handle_generate_scene_images(self, command: Command) -> None:
+        self._generate_visual_asset_images("scene", command)
+
+    def _handle_generate_prop_images(self, command: Command) -> None:
+        self._generate_visual_asset_images("prop", command)
+
+    def _generate_visual_asset_images(self, task_type: str, command: Command) -> None:
+        project = self._require_project()
+        if not project:
+            return
+        adapter = self._create_image_adapter(task_type)
+        if not adapter:
+            self._print_project_menu()
+            return
+        task_config = config.liblib_task_config(task_type) if getattr(config, "IMAGE_PROVIDER", "comfyui") == "liblib" else {"img_count": 1}
+        limit = command.args.get("limit")
+        index = command.args.get("index")
+        if limit is None and index is None:
+            raw = read_text("生成范围：输入数量生成前N个，输入 #序号 生成单个，直接回车生成全部 [5]: ").strip()
+            if raw.startswith("#"):
+                try:
+                    index = int(raw[1:].strip())
+                except ValueError:
+                    index = None
+            elif raw:
+                try:
+                    limit = int(raw)
+                except ValueError:
+                    limit = 5
+            else:
+                limit = 5
+        output_dir = self.manager.project_dir(project.project_id) / "images" / "assets"
+        generator = VisualAssetImageGenerator(output_dir=output_dir, adapter=adapter)
+        label = {"character": "角色", "scene": "场景", "prop": "道具"}[task_type]
+        console.print(f"[cyan]开始生成{label}图片...[/cyan]")
+        if task_type == "character":
+            results = asyncio.run(
+                generator.generate_characters(
+                    characters=project.characters,
+                    aspect_ratio=project.aspect_ratio,
+                    limit=limit,
+                    index=index,
+                    img_count=task_config["img_count"],
+                )
+            )
+        else:
+            results = asyncio.run(
+                generator.generate_assets(
+                    assets=project.visual_assets,
+                    category=task_type,
+                    aspect_ratio=project.aspect_ratio,
+                    limit=limit,
+                    index=index,
+                    img_count=task_config["img_count"],
+                )
+            )
+        success = sum(1 for result in results if result.get("status") == "success")
+        failed = len(results) - success
+        project.updated_at = now_iso()
+        self.manager.save_project(project)
+        console.print(f"[green]{label}图片生成完成:[/green] 成功 {success}，失败 {failed}。")
+        if failed:
+            for result in results:
+                if result.get("status") != "success":
+                    console.print(f"[red]失败:[/red] {result.get('error')}")
+        self._print_project_menu()
+
+    def _create_image_adapter(self, task_type: str = "shot"):
+        provider = getattr(config, "IMAGE_PROVIDER", "comfyui").lower()
+        if provider == "liblib":
+            task_config = config.liblib_task_config(task_type)
+            missing = [
+                name
+                for name in ("LIBLIB_ACCESS_KEY", "LIBLIB_SECRET_KEY", "LIBLIB_TEMPLATE_UUID")
+                if not getattr(config, name, "") and name != "LIBLIB_TEMPLATE_UUID"
+            ]
+            if not task_config["template_uuid"]:
+                missing.append(f"LIBLIB_{task_type.upper()}_TEMPLATE_UUID 或 LIBLIB_TEMPLATE_UUID")
+            if task_config["endpoint"] == "/api/generate/webui/text2img" and not task_config["checkpoint_id"]:
+                missing.append(f"LIBLIB_{task_type.upper()}_CHECKPOINT_ID 或 LIBLIB_CHECKPOINT_ID")
+            if missing:
+                console.print("[red]还没有配置 liblib.art 生图。[/red]")
+                console.print(f"请在 `.env` 中补齐: {', '.join(missing)}")
+                console.print("可按任务类型覆盖: LIBLIB_CHARACTER_* / LIBLIB_SCENE_* / LIBLIB_PROP_* / LIBLIB_SHOT_*。")
+                return None
+            return LiblibImageAdapter(
+                access_key=config.LIBLIB_ACCESS_KEY,
+                secret_key=config.LIBLIB_SECRET_KEY,
+                template_uuid=task_config["template_uuid"],
+                base_url=config.LIBLIB_BASE_URL,
+                endpoint=task_config["endpoint"],
+                status_endpoint=config.LIBLIB_STATUS_ENDPOINT,
+                timeout=config.LIBLIB_TIMEOUT,
+                poll_interval=config.LIBLIB_POLL_INTERVAL,
+                checkpoint_id=task_config["checkpoint_id"],
+                lora_model_id=task_config["lora_model_id"],
+                lora_weight=task_config["lora_weight"],
+                sampler=task_config["sampler"],
+                steps=task_config["steps"],
+                cfg_scale=task_config["cfg_scale"],
+                clip_skip=task_config["clip_skip"],
+            )
+        if provider != "comfyui":
+            console.print(f"[red]不支持的图片生成 provider:[/red] {provider}")
+            console.print("请设置 `IMAGE_PROVIDER=comfyui` 或 `IMAGE_PROVIDER=liblib`。")
+            return None
+        workflow_path = getattr(config, "COMFYUI_IMAGE_WORKFLOW_PATH", "")
+        if not workflow_path:
+            console.print("[red]还没有配置 ComfyUI 文生图工作流。[/red]")
+            console.print("请在 `.env` 中配置 `COMFYUI_IMAGE_WORKFLOW_PATH=examples/你的图片工作流.json`。")
+            console.print("图片工作流需支持占位符: __PROMPT__ / __NEGATIVE_PROMPT__ / __OUTPUT_PREFIX__ / __WIDTH__ / __HEIGHT__。")
+            return None
+        if not Path(workflow_path).exists():
+            console.print(f"[red]图片工作流不存在:[/red] {workflow_path}")
+            return None
+        workflow = json.loads(Path(workflow_path).read_text(encoding="utf-8"))
+        validation_error = validate_image_workflow(workflow)
+        if validation_error:
+            console.print(f"[red]图片工作流不可用:[/red] {validation_error}")
+            console.print("需要一个 ComfyUI 文生图 API workflow，至少包含正向 prompt、反向 prompt、采样、解码、SaveImage。")
+            console.print("请把真实工作流导出为 API JSON，并把 prompt/negative/output/width/height 替换为对应占位符。")
+            return None
+        return ComfyUIImageAdapter(
+            base_url=config.COMFYUI_BASE_URL,
+            workflow_path=workflow_path,
+            timeout=config.GENERATION_TIMEOUT,
+        )
+
+    def _handle_import_image_dir(self, command: Command) -> None:
+        project = self._require_project()
+        if not project:
+            return
+        directory = read_text("图片目录: ").strip()
+        if not directory:
+            console.print("已取消导入。")
+            self._print_project_menu()
+            return
+        bound_count = self.import_shot_images_from_dir(Path(directory))
+        console.print(f"[green]已绑定图片:[/green] {bound_count}/{len(project.shots)}")
+        self._print_project_menu()
 
     def _handle_set_shot_image(self, command: Command) -> None:
         project = self._require_project()
@@ -372,6 +611,14 @@ class ShortDramaAgent:
     def _handle_generate_all(self, command: Command) -> None:
         project = self._require_project()
         if not project:
+            return
+        missing = [shot.shot_id for shot in project.shots if not shot.image_path]
+        if missing:
+            manifest = self.export_image_task_manifest()
+            console.print("[red]不能生成全部视频: 还有分镜缺少图片。[/red]")
+            console.print(f"缺少图片: {self._format_episode_ranges(missing)}")
+            console.print(f"请先按图片任务表生成图片并导入: {manifest}")
+            self._print_project_menu()
             return
         generator = VideoGenerator(self.manager.project_dir(project.project_id) / "videos")
         results = asyncio.run(generator.generate_all(self._storyboard_for(project.shots)))
@@ -411,6 +658,7 @@ class ShortDramaAgent:
         minutes_per_episode = read_text("每集分钟数 [1]: ").strip()
         audience = read_text("目标受众 [3-8岁儿童]: ").strip()
         pacing_style = read_text("节奏风格 [寓教于乐，单集有起承转合]: ").strip()
+        aspect_ratio = read_text("画幅 9:16/16:9 [9:16]: ").strip()
         platform = read_text("平台 [可跳过，默认手动发布]: ").strip()
         fields = normalize_new_project_fields(
             premise=premise,
@@ -421,12 +669,14 @@ class ShortDramaAgent:
             minutes_per_episode=minutes_per_episode,
             audience=audience,
             pacing_style=pacing_style,
+            aspect_ratio=aspect_ratio,
         )
         project = self.manager.create_project(
             fields["title"],
             premise=fields["premise"],
             genre=fields["genre"],
             platform=fields["platform"],
+            aspect_ratio=fields["aspect_ratio"],
             episode_count=fields["episode_count"],
             seconds_per_episode=fields["seconds_per_episode"],
             audience=fields["audience"],
@@ -471,6 +721,7 @@ class ShortDramaAgent:
                     on_progress=update_progress,
                     on_checkpoint=lambda checkpoint: self._save_script_checkpoint(project, checkpoint),
                     resume_from=resume_from,
+                    machine_review=lambda script: self._machine_review_script(project, script),
                 )
                 project.script = script_result.script
         except Exception as exc:
@@ -486,6 +737,14 @@ class ShortDramaAgent:
         project.updated_at = now_iso()
         self.manager.save_project(project)
         self._save_script_reflections(project, script_result.reflections)
+        final_validation = validate_script_completeness(project)
+        if not final_validation.is_complete:
+            project.script_generation["status"] = "machine_validation_failed"
+            self.manager.save_project(project)
+            console.print("[red]脚本生成完成，但机器结构校验仍未通过，不能确认脚本。[/red]")
+            self._print_script_validation(final_validation)
+            self._print_project_menu()
+            return
         console.print(
             f"[green]脚本已生成并保存。[/green] 已完成 {script_result.rounds} 轮反思质检。"
             " 下一步可确认脚本、生成角色和分镜。"
@@ -510,6 +769,50 @@ class ShortDramaAgent:
         table.add_row("5", "保存脚本和反思日志")
         console.print(table)
 
+    def _repair_script_structure(self, project: Project, validation) -> bool:
+        repaired_script = repair_episode_numbering(project.script, project.episode_count)
+        if repaired_script == project.script:
+            return False
+        project.script = repaired_script
+        project.script_generation = {"status": "structure_repaired"}
+        project.updated_at = now_iso()
+        self.manager.save_project(project)
+        repaired_validation = validate_script_completeness(project)
+        if repaired_validation.is_complete:
+            console.print("[green]已自动修复脚本集数结构。[/green]")
+            self._print_script_validation_detail(project)
+            return True
+        console.print("[yellow]已尝试自动修复脚本结构，但仍未完全通过，将继续调用 LLM 修复。[/yellow]")
+        self._print_script_validation(repaired_validation)
+        return False
+
+    def _machine_review_script(self, project: Project, script: str) -> str | None:
+        candidate = Project(
+            project_id=project.project_id,
+            title=project.title,
+            premise=project.premise,
+            genre=project.genre,
+            platform=project.platform,
+            episode_count=project.episode_count,
+            seconds_per_episode=project.seconds_per_episode,
+            audience=project.audience,
+            pacing_style=project.pacing_style,
+            script=script,
+        )
+        validation = validate_script_completeness(candidate)
+        if validation.is_complete:
+            return None
+        parts = [
+            f"唯一集数 {validation.episode_count}/{validation.expected_episode_count}",
+        ]
+        if validation.missing_episodes:
+            parts.append(f"缺失集数 {self._format_episode_ranges(validation.missing_episodes)}")
+        if validation.duplicate_episodes:
+            parts.append(f"重复集数 {self._format_episode_ranges(validation.duplicate_episodes)}")
+        if validation.issues:
+            parts.append(f"问题 {'、'.join(validation.issues)}")
+        return "机器结构校验未通过: " + "；".join(parts) + "。"
+
     def _script_generation_premise(self, project: Project) -> str:
         if project.premise:
             return project.premise
@@ -527,8 +830,123 @@ class ShortDramaAgent:
         console.print(
             f"[yellow]完整性: {validation.episode_count}/{validation.expected_episode_count} 集[/yellow]"
         )
+        if validation.missing_episodes:
+            console.print(f"[yellow]缺失集数: {self._format_episode_ranges(validation.missing_episodes)}[/yellow]")
         for issue in validation.issues:
             console.print(f"[yellow]- {issue}[/yellow]")
+
+    def _print_script_validation_detail(self, project: Project) -> None:
+        validation = validate_script_completeness(project)
+        table = Table(title="脚本完整性明细")
+        table.add_column("项目")
+        table.add_column("内容")
+        table.add_row("状态", "通过" if validation.is_complete else "未通过")
+        table.add_row("脚本片段数", str(validation.fragment_count))
+        table.add_row("唯一集数", f"{validation.episode_count}/{validation.expected_episode_count}")
+        table.add_row(
+            "已有集数",
+            self._format_episode_ranges(validation.present_episodes) if validation.present_episodes else "无",
+        )
+        table.add_row(
+            "缺失集数",
+            self._format_episode_ranges(validation.missing_episodes) if validation.missing_episodes else "无",
+        )
+        table.add_row(
+            "重复集数",
+            self._format_episode_ranges(validation.duplicate_episodes) if validation.duplicate_episodes else "无",
+        )
+        table.add_row("问题", "、".join(validation.issues) if validation.issues else "无")
+        console.print(table)
+
+    def _print_visual_bible_for_confirmation(self, visual_bible: VisualBible) -> None:
+        console.print("[bold cyan]视觉资产待确认[/bold cyan]")
+        for index, character in enumerate(visual_bible.characters, start=1):
+            table = Table(title=f"角色 {index}: {character.name}")
+            table.add_column("图片")
+            table.add_column("Prompt / 描述")
+            table.add_row("基础描述", character.description)
+            table.add_row("风格", character.style_prompt)
+            table.add_row("三视图", character.turnaround_prompt)
+            table.add_row("正面图", character.front_view_prompt)
+            table.add_row("侧面图", character.side_view_prompt)
+            table.add_row("背面图", character.back_view_prompt)
+            table.add_row("一致性", character.consistency_prompt)
+            table.add_row("负面词", character.negative_prompt)
+            console.print(table)
+
+        for index, asset in enumerate(visual_bible.scenes, start=1):
+            table = Table(title=f"场景 {index}: {asset.name}")
+            table.add_column("项目")
+            table.add_column("内容")
+            table.add_row("描述", asset.description)
+            table.add_row("风格", asset.style_prompt)
+            table.add_row("图片Prompt", asset.image_prompt)
+            table.add_row("负面词", asset.negative_prompt)
+            table.add_row("用途", asset.purpose)
+            console.print(table)
+
+        for index, asset in enumerate(visual_bible.props, start=1):
+            table = Table(title=f"道具 {index}: {asset.name}")
+            table.add_column("项目")
+            table.add_column("内容")
+            table.add_row("描述", asset.description)
+            table.add_row("风格", asset.style_prompt)
+            table.add_row("图片Prompt", asset.image_prompt)
+            table.add_row("负面词", asset.negative_prompt)
+            table.add_row("用途", asset.purpose)
+            console.print(table)
+
+    def _save_visual_bible_prompts(self, project: Project) -> None:
+        prompt_dir = self.manager.project_dir(project.project_id) / "prompts"
+        prompt_dir.mkdir(parents=True, exist_ok=True)
+        lines = [f"# {project.title} 视觉资产圣经", "", "## 统一参考风格", "", with_reference_style("", "shot"), ""]
+        for character in project.characters:
+            lines.extend(
+                [
+                    f"## 角色: {character.name}",
+                    f"- 基础描述: {character.description}",
+                    f"- 风格: {with_reference_style(character.style_prompt, 'character')}",
+                    f"- 三视图: {with_reference_style(character.turnaround_prompt, 'character')}",
+                    f"- 正面图: {with_reference_style(character.front_view_prompt, 'character')}",
+                    f"- 侧面图: {with_reference_style(character.side_view_prompt, 'character')}",
+                    f"- 背面图: {with_reference_style(character.back_view_prompt, 'character')}",
+                    f"- 一致性: {character.consistency_prompt}",
+                    f"- 负面词: {with_reference_negative(character.negative_prompt)}",
+                    "",
+                ]
+            )
+        for asset in project.visual_assets:
+            title = "场景" if asset.category == "scene" else "道具"
+            category = "scene" if asset.category == "scene" else "prop"
+            lines.extend(
+                [
+                    f"## {title}: {asset.name}",
+                    f"- 描述: {asset.description}",
+                    f"- 风格: {with_reference_style(asset.style_prompt, category)}",
+                    f"- 图片Prompt: {with_reference_style(asset.image_prompt, category)}",
+                    f"- 负面词: {with_reference_negative(asset.negative_prompt)}",
+                    f"- 用途: {asset.purpose}",
+                    "",
+                ]
+            )
+        path = prompt_dir / "visual_bible_prompts.md"
+        path.write_text("\n".join(lines), encoding="utf-8")
+        console.print(f"[cyan]视觉资产提示词:[/cyan] {path}")
+
+    @staticmethod
+    def _format_episode_ranges(episodes: list[int]) -> str:
+        if not episodes:
+            return ""
+        ranges = []
+        start = previous = episodes[0]
+        for episode in episodes[1:]:
+            if episode == previous + 1:
+                previous = episode
+                continue
+            ranges.append(f"{start}" if start == previous else f"{start}-{previous}")
+            start = previous = episode
+        ranges.append(f"{start}" if start == previous else f"{start}-{previous}")
+        return ", ".join(ranges)
 
     def _save_script_checkpoint(self, project: Project, checkpoint: ScriptGenerationCheckpoint) -> None:
         project.script = checkpoint.script or project.script
@@ -585,20 +1003,100 @@ class ShortDramaAgent:
         prompt_dir = project_dir / "prompts"
         prompt_dir.mkdir(parents=True, exist_ok=True)
         for shot in project.shots:
-            prompt = build_image_prompt(shot, project.characters, aspect_ratio=config.DEFAULT_RATIO)
+            prompt = build_image_prompt(shot, project.characters, aspect_ratio=project.aspect_ratio)
             (prompt_dir / f"shot_{shot.shot_id:03d}_image_prompt.txt").write_text(
                 prompt,
                 encoding="utf-8",
             )
         console.print(f"图片提示词已导出: {prompt_dir}")
+        manifest = self.export_image_task_manifest()
+        console.print(f"图片任务表已导出: {manifest}")
         self._advance_step("image_prompts_exported")
         project.updated_at = now_iso()
         self.manager.save_project(project)
         self._print_project_menu()
 
+    def export_image_task_manifest(self) -> Path:
+        project = self._require_project()
+        if not project:
+            raise RuntimeError("当前没有打开的剧本项目")
+        project_dir = self.manager.project_dir(project.project_id)
+        prompt_dir = project_dir / "prompts"
+        prompt_dir.mkdir(parents=True, exist_ok=True)
+        lines = [
+            f"# {project.title} 图片任务表",
+            "",
+            f"- 画幅: {project.aspect_ratio}",
+            f"- 分镜数量: {len(project.shots)}",
+            f"- 命名建议: `shot_001.png`, `shot_002.png` ...",
+            f"- 批量绑定命令: `导入图片目录`",
+            "",
+        ]
+        for shot in project.shots:
+            prompt_file = prompt_dir / f"shot_{shot.shot_id:03d}_image_prompt.txt"
+            lines.extend(
+                [
+                    f"## 第 {shot.shot_id} 镜",
+                    f"- 状态: {'已绑定 ' + shot.image_path if shot.image_path else '待生成图片'}",
+                    f"- 场景: {shot.scene_description}",
+                    f"- 动作: {shot.action}",
+                    f"- 角色: {', '.join(shot.characters)}",
+                    f"- Prompt文件: {prompt_file}",
+                    f"- 推荐图片文件名: shot_{shot.shot_id:03d}.png",
+                    "",
+                ]
+            )
+        manifest = prompt_dir / "image_tasks.md"
+        manifest.write_text("\n".join(lines), encoding="utf-8")
+        return manifest
+
+    def import_shot_images_from_dir(self, image_dir: Path) -> int:
+        project = self._require_project()
+        if not project:
+            return 0
+        if not image_dir.exists() or not image_dir.is_dir():
+            console.print(f"[red]图片目录不存在:[/red] {image_dir}")
+            return 0
+        images = {
+            path.name.lower(): path
+            for path in image_dir.iterdir()
+            if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}
+        }
+        bound = 0
+        for shot in project.shots:
+            image = self._match_shot_image(shot.shot_id, images)
+            if not image:
+                continue
+            shot.image_path = str(image)
+            shot.status = "image_ready"
+            bound += 1
+        project.updated_at = now_iso()
+        self.manager.save_project(project)
+        return bound
+
+    @staticmethod
+    def _match_shot_image(shot_id: int, images: dict[str, Path]) -> Path | None:
+        candidates = []
+        for ext in ("png", "jpg", "jpeg", "webp"):
+            candidates.extend(
+                [
+                    f"shot_{shot_id:03d}.{ext}",
+                    f"shot_{shot_id}.{ext}",
+                    f"{shot_id:03d}.{ext}",
+                    f"{shot_id}.{ext}",
+                    f"第{shot_id}镜.{ext}",
+                    f"第{shot_id:03d}镜.{ext}",
+                ]
+            )
+        for name in candidates:
+            image = images.get(name.lower())
+            if image:
+                return image
+        return None
+
     def _storyboard_for(self, shots: list[Shot]) -> dict:
         return {
-            "aspect_ratio": config.DEFAULT_RATIO,
+            "aspect_ratio": self.current_project.aspect_ratio,
             "characters": [character.__dict__ for character in self.current_project.characters],
             "shots": [
                 {
@@ -665,9 +1163,10 @@ class ShortDramaAgent:
         video_ready = sum(1 for shot in project.shots if shot.video_path)
         table.add_row("当前步骤", project.current_step)
         table.add_row("题材/平台", f"{project.genre} / {project.platform}")
+        table.add_row("画幅", project.aspect_ratio)
         table.add_row("集数/单集", f"{project.episode_count} 集 / {project.seconds_per_episode} 秒")
         table.add_row("受众/节奏", f"{project.audience} / {project.pacing_style}")
-        table.add_row("角色/分镜", f"{len(project.characters)} / {len(project.shots)}")
+        table.add_row("角色/资产/分镜", f"{len(project.characters)} / {len(project.visual_assets)} / {len(project.shots)}")
         table.add_row("图片/视频", f"{image_ready}/{len(project.shots)} / {video_ready}/{len(project.shots)}")
         validation = validate_script_completeness(project)
         table.add_row(
@@ -717,17 +1216,41 @@ class ShortDramaAgent:
         table = Table(title="角色圣经")
         table.add_column("角色")
         table.add_column("外观锚点")
+        table.add_column("三视图提示")
         table.add_column("一致性提示")
+        table.add_column("图片")
         rows = project.characters if full else project.characters[:5]
         for character in rows:
+            image_count = sum(len(paths) for paths in character.image_paths.values())
             table.add_row(
                 character.name,
                 character.description[:80],
+                (character.turnaround_prompt or character.front_view_prompt)[:80],
                 character.consistency_prompt[:80],
+                f"{image_count} 张" if image_count else "未生成",
             )
         console.print(table)
         if len(project.characters) > len(rows):
             console.print(f"... 还有 {len(project.characters) - len(rows)} 个角色，输入 `查看角色` 显示完整列表。")
+        if project.visual_assets:
+            asset_table = Table(title="场景/道具资产")
+            asset_table.add_column("类型")
+            asset_table.add_column("名称")
+            asset_table.add_column("描述")
+            asset_table.add_column("图片Prompt")
+            asset_table.add_column("图片")
+            asset_rows = project.visual_assets if full else project.visual_assets[:8]
+            for asset in asset_rows:
+                asset_table.add_row(
+                    "场景" if asset.category == "scene" else "道具",
+                    asset.name,
+                    asset.description[:80],
+                    asset.image_prompt[:100],
+                    f"{len(asset.image_paths)} 张" if asset.image_paths else "未生成",
+                )
+            console.print(asset_table)
+            if len(project.visual_assets) > len(asset_rows):
+                console.print(f"... 还有 {len(project.visual_assets) - len(asset_rows)} 个场景/道具，输入 `查看角色` 显示完整列表。")
 
     def _print_storyboard(self, project: Project, full: bool = False) -> None:
         if not project.shots:

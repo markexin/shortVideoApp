@@ -1,0 +1,32 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "__IMAGE_NAME__"
+    }
+  },
+  "2": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "__PROMPT__"
+    }
+  },
+  "3": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "text": "__NEGATIVE_PROMPT__"
+    }
+  },
+  "4": {
+    "class_type": "VHS_VideoCombine",
+    "inputs": {
+      "filename_prefix": "__OUTPUT_PREFIX__"
+    }
+  },
+  "5": {
+    "class_type": "Note",
+    "inputs": {
+      "text": "This is not a runnable workflow by itself. Export your ComfyUI workflow in API format and replace the corresponding values with __IMAGE_NAME__, __PROMPT__, __NEGATIVE_PROMPT__, __OUTPUT_PREFIX__, and optionally __DURATION__."
+    }
+  }
+}

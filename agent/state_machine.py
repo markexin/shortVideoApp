@@ -45,6 +45,9 @@ STEP_ACTIONS = {
         Action("1", "查看脚本内容", "show_script", "查看脚本"),
         Action("2", "查看角色圣经", "show_characters", "查看角色"),
         Action("4", "生成短剧分镜", "generate_storyboard", "生成分镜"),
+        Action("5", "生成角色图片", "generate_character_images", "生成角色图片"),
+        Action("12", "生成场景图片", "generate_scene_images", "生成场景图片"),
+        Action("13", "生成道具图片", "generate_prop_images", "生成道具图片"),
     ],
     "storyboard_ready": [
         Action("1", "查看脚本内容", "show_script", "查看脚本"),
@@ -56,6 +59,12 @@ STEP_ACTIONS = {
         Action("1", "查看脚本内容", "show_script", "查看脚本"),
         Action("2", "查看角色圣经", "show_characters", "查看角色"),
         Action("3", "查看分镜摘要", "show_storyboard", "查看分镜"),
+        Action("4", "查看/导出图片任务", "show_image_tasks", "查看图片任务"),
+        Action("5", "调用工作流生成全部图片", "generate_images", "生成图片"),
+        Action("12", "生成角色图片", "generate_character_images", "生成角色图片"),
+        Action("13", "生成场景图片", "generate_scene_images", "生成场景图片"),
+        Action("14", "生成道具图片", "generate_prop_images", "生成道具图片"),
+        Action("15", "批量绑定已生成图片目录", "import_image_dir", "导入图片目录"),
         Action("8", "图片已准备后生成全部视频", "generate_all", "生成全部"),
     ],
     "videos_ready": [

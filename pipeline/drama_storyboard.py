@@ -5,6 +5,7 @@ import re
 
 import config
 from pipeline.llm_client import create_llm_client
+from pipeline.visual_style import REFERENCE_NEGATIVE_PROMPT, REFERENCE_STYLE
 from projects.schema import Character, Shot
 
 
@@ -25,6 +26,12 @@ def build_storyboard_prompt(
     return f"""请将下面短剧脚本拆成分镜。
 
 画面比例: {aspect_ratio}
+
+统一视觉风格:
+{REFERENCE_STYLE}
+
+统一负面词必须并入每个 negative_prompt:
+{REFERENCE_NEGATIVE_PROMPT}
 
 角色圣经:
 {character_block}
@@ -54,6 +61,8 @@ def build_storyboard_prompt(
 - 单镜头最多 2 个主要角色近景互动
 - 每个含角色镜头必须继承角色圣经中的外观锚点
 - image_prompt 用于用户手动生成首帧图，必须能独立复制使用
+- 每个 image_prompt 必须符合统一视觉风格，尤其是 refined Chinese anime 3D game cinematic style、porcelain skin、glossy black hair、soft blue-white lighting、sparkling particles
+- 仙侠人物近景应强调精致五官、冷白蓝光、发丝细节、银白/玉质高光；场景应强调仙门、云雾、玉石、灵光、粒子
 - video_prompt 用于图生视频，聚焦动作、运镜、情绪
 - 不要要求画面中出现文字、Logo、字幕
 - 只输出 JSON，不要解释

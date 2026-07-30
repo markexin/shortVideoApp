@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
@@ -9,15 +10,19 @@ from typing import Any
 class ScriptValidationResult:
     is_complete: bool
     issues: list[str]
+    fragment_count: int
     episode_count: int
     expected_episode_count: int
+    present_episodes: list[int]
+    missing_episodes: list[int]
+    duplicate_episodes: list[int]
 
 
 def split_script_units(script: str) -> list[dict[str, Any]]:
     pattern = re.compile(
-        r"(?m)^\s*(?:#{1,4}\s*[^\n#]{0,30}?(?:【)?第\s*([一二三四五六七八九十百千万\d]+)\s*集(?:[^\n]*(?:完整脚本|脚本|剧本|正文)|\s*[:：][^\n]*)|(?:【)?第?\s*([一二三四五六七八九十百千万\d]+)\s*集\s*[:：][^\n]*)$"
+        r"(?m)^\s*(?:#{1,4}\s*[^\n#]{0,30}?(?:【)?第\s*([一二三四五六七八九十百千万\d]+)\s*集[^\n]*|(?:【)?第?\s*([一二三四五六七八九十百千万\d]+)\s*集\s*[:：][^\n]*)$"
     )
-    matches = list(pattern.finditer(script))
+    matches = [match for match in pattern.finditer(script) if _is_script_episode_heading(match.group(0))]
     units: list[dict[str, Any]] = []
     for index, match in enumerate(matches):
         start = match.start()
@@ -35,10 +40,24 @@ def split_script_units(script: str) -> list[dict[str, Any]]:
     return units
 
 
+def _is_script_episode_heading(line: str) -> bool:
+    heading = line.strip().strip("#").strip()
+    excluded_terms = ("大纲", "总表", "规划", "列表", "Checklist", "checklist")
+    return not any(term in heading for term in excluded_terms)
+
+
 def validate_script_completeness(project: Any) -> ScriptValidationResult:
     script = project.script or ""
     visible_script = re.sub(r"<think>.*?</think>", "", script, flags=re.DOTALL | re.IGNORECASE)
     units = project.script_units or split_script_units(script)
+    episode_counter = Counter(unit["episode"] for unit in units)
+    present_episodes = sorted(episode_counter)
+    missing_episodes = [
+        episode for episode in range(1, project.episode_count + 1) if episode not in present_episodes
+    ]
+    duplicate_episodes = sorted(
+        episode for episode, count in episode_counter.items() if count > 1
+    )
     issues: list[str] = []
 
     if not script.strip():
@@ -49,14 +68,20 @@ def validate_script_completeness(project: Any) -> ScriptValidationResult:
         issues.append("脚本集数与项目设定不一致")
     if _declares_mismatched_duration(visible_script or script, project.seconds_per_episode):
         issues.append("脚本单集时长与项目设定不一致")
-    if project.episode_count > 1 and len({unit["episode"] for unit in units}) < project.episode_count:
+    if project.episode_count > 1 and len(present_episodes) < project.episode_count:
         issues.append("分集内容不足")
+    if duplicate_episodes:
+        issues.append("存在重复集数")
 
     return ScriptValidationResult(
         is_complete=not issues,
         issues=issues,
-        episode_count=len({unit["episode"] for unit in units}),
+        fragment_count=len(units),
+        episode_count=len(present_episodes),
         expected_episode_count=project.episode_count,
+        present_episodes=present_episodes,
+        missing_episodes=missing_episodes,
+        duplicate_episodes=duplicate_episodes,
     )
 
 

@@ -59,6 +59,15 @@ def parse_command(text: str) -> Command:
         "生成分镜": "generate_storyboard",
         "导出图片提示词": "export_image_prompts",
         "图片提示词": "export_image_prompts",
+        "查看图片任务": "show_image_tasks",
+        "图片任务": "show_image_tasks",
+        "生成图片": "generate_images",
+        "生成全部图片": "generate_images",
+        "生成角色图片": "generate_character_images",
+        "生成场景图片": "generate_scene_images",
+        "生成道具图片": "generate_prop_images",
+        "导入图片目录": "import_image_dir",
+        "批量绑定图片": "import_image_dir",
         "合成整集": "assemble_episode",
         "拼接整集": "assemble_episode",
     }
@@ -70,6 +79,22 @@ def parse_command(text: str) -> Command:
     generate_match = re.search(r"生成第\s*(\d+)\s*镜", raw)
     if generate_match:
         return Command("generate_shot", {"shot_id": int(generate_match.group(1))})
+
+    character_image_one_match = re.search(r"生成第\s*(\d+)\s*个角色图片", raw)
+    if character_image_one_match:
+        return Command("generate_character_images", {"index": int(character_image_one_match.group(1))})
+
+    character_image_limit_match = re.search(r"生成前\s*(\d+)\s*个角色图片", raw)
+    if character_image_limit_match:
+        return Command("generate_character_images", {"limit": int(character_image_limit_match.group(1))})
+
+    scene_image_one_match = re.search(r"生成第\s*(\d+)\s*个场景图片", raw)
+    if scene_image_one_match:
+        return Command("generate_scene_images", {"index": int(scene_image_one_match.group(1))})
+
+    prop_image_one_match = re.search(r"生成第\s*(\d+)\s*个道具图片", raw)
+    if prop_image_one_match:
+        return Command("generate_prop_images", {"index": int(prop_image_one_match.group(1))})
 
     rewrite_match = re.search(r"重写第\s*(\d+)\s*镜", raw)
     if rewrite_match:
