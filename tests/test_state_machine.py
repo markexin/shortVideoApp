@@ -28,4 +28,6 @@ def test_available_actions_for_storyboard_ready():
 
     command_names = [action.command_name for action in actions]
     assert "export_image_prompts" in command_names
+    assert "prepare_video_segment" in command_names
+    assert "show_video_segment_payload" in command_names
     assert "status" in command_names

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 from rich.console import Console
@@ -20,6 +21,7 @@ from pipeline.prompt_builder import build_image_prompt
 from pipeline.script_structure_repair import repair_episode_numbering
 from pipeline.script_writer import ScriptGenerationCheckpoint, generate_script_reflectively
 from pipeline.script_validator import validate_script_completeness
+from pipeline.video_segment_preparer import find_latest_video_segment_payload, prepare_next_video_segment_payload
 from pipeline.visual_style import character_identity_lock, with_reference_negative, with_reference_style
 from projects.manager import ProjectManager
 from projects.schema import Character, Project, Shot, now_iso
@@ -104,6 +106,8 @@ class ShortDramaAgent:
             "generate_characters": self._handle_generate_characters,
             "generate_storyboard": self._handle_generate_storyboard,
             "export_image_prompts": self._handle_export_image_prompts,
+            "prepare_video_segment": self._handle_prepare_video_segment,
+            "show_video_segment_payload": self._handle_show_video_segment_payload,
             "show_image_tasks": self._handle_show_image_tasks,
             "import_image_dir": self._handle_import_image_dir,
             "assemble_episode": self._handle_assemble_episode,
@@ -922,6 +926,125 @@ class ShortDramaAgent:
         project.updated_at = now_iso()
         self.manager.save_project(project)
         self._print_project_menu()
+
+    def _handle_prepare_video_segment(self, command: Command) -> None:
+        project = self._require_project()
+        if not project:
+            return
+        if not self._require_step({"storyboard_ready", "image_prompts_exported", "videos_ready", "episode_ready"}):
+            return
+        if not project.shots:
+            console.print("[yellow]当前项目还没有分镜，请先生成分镜。[/yellow]")
+            self._print_project_menu()
+            return
+
+        project_dir = self.manager.project_dir(project.project_id)
+        try:
+            payload = prepare_next_video_segment_payload(project, project_dir=project_dir)
+        except ValueError as exc:
+            console.print(f"[yellow]{exc}[/yellow]")
+            self._print_project_menu()
+            return
+
+        out_path = self._video_segment_payload_path(project, payload)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+        shot_ids = [str(shot["shot_id"]) for shot in payload["shots"]]
+        console.print(f"[green]视频片段入参已准备:[/green] {out_path}")
+        console.print(
+            f"自动选择: 第 {payload['episode']} 集 "
+            f"{payload['start_sec']}-{payload['end_sec']} 秒，"
+            f"分镜 {', '.join(shot_ids)}"
+        )
+        base_images = payload.get("base_images", {})
+        console.print(
+            "基础素材: "
+            f"角色 {len(base_images.get('characters', []))} 张，"
+            f"背景/场景 {len(base_images.get('scenes', []))} 张，"
+            f"道具 {len(base_images.get('props', []))} 张。"
+        )
+        if payload["api_ready"]:
+            console.print("[green]可以把该 payload 交给多图+文本视频 API。[/green]")
+        else:
+            console.print("[yellow]还不能调用视频 API: 缺少基础素材或分镜提示词。[/yellow]")
+        self._print_project_menu()
+
+    def _handle_show_video_segment_payload(self, command: Command) -> None:
+        project = self._require_project()
+        if not project:
+            return
+        project_dir = self.manager.project_dir(project.project_id)
+        payload_path = find_latest_video_segment_payload(project_dir)
+        if payload_path is None:
+            console.print("[yellow]当前还没有视频入参，请先输入 `准备视频片段`。[/yellow]")
+            self._print_project_menu()
+            return
+
+        try:
+            payload = json.loads(payload_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            console.print(f"[red]视频入参读取失败:[/red] {exc}")
+            self._print_project_menu()
+            return
+
+        self._print_video_segment_payload_summary(payload_path, payload)
+        self._print_project_menu()
+
+    @staticmethod
+    def _print_video_segment_payload_summary(payload_path: Path, payload: dict) -> None:
+        base_images = payload.get("base_images", {})
+        shots = payload.get("shots", [])
+        shot_ids = ", ".join(str(shot.get("shot_id", "")) for shot in shots)
+        table = Table(title="当前视频入参")
+        table.add_column("项目")
+        table.add_column("内容")
+        table.add_row("文件", str(payload_path))
+        table.add_row(
+            "片段",
+            f"第 {payload.get('episode')} 集 {payload.get('start_sec')}-{payload.get('end_sec')} 秒",
+        )
+        table.add_row("分镜", shot_ids)
+        table.add_row("API状态", "可调用" if payload.get("api_ready") else "未就绪")
+        table.add_row(
+            "基础素材",
+            f"角色 {len(base_images.get('characters', []))} / "
+            f"背景 {len(base_images.get('scenes', []))} / "
+            f"道具 {len(base_images.get('props', []))}",
+        )
+        script_excerpt = str(payload.get("script_excerpt", "")).replace("\n", " ")
+        table.add_row("脚本开头", script_excerpt[:120])
+        console.print(table)
+
+        shot_table = Table(title="分镜提示词摘要")
+        shot_table.add_column("镜头", justify="right")
+        shot_table.add_column("时间")
+        shot_table.add_column("场景")
+        shot_table.add_column("提示词")
+        for shot in shots[:8]:
+            prompt = shot.get("video_prompt") or shot.get("image_prompt") or ""
+            shot_table.add_row(
+                str(shot.get("shot_id", "")),
+                f"{shot.get('start_sec')}-{shot.get('end_sec')}",
+                str(shot.get("scene_description", ""))[:30],
+                str(prompt)[:80],
+            )
+        console.print(shot_table)
+
+    @staticmethod
+    def _video_segment_payload_path(project: Project, payload: dict) -> Path:
+        start = int(payload["start_sec"])
+        end = int(payload["end_sec"])
+        episode = int(payload["episode"])
+        return (
+            config.PROJECTS_DIR
+            / project.project_id
+            / "prompts"
+            / f"video_segment_ep{episode:03d}_{start:03d}_{end:03d}_payload.json"
+        )
 
     def export_image_task_manifest(self) -> Path:
         project = self._require_project()

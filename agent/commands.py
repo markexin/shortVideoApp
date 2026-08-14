@@ -63,6 +63,12 @@ def parse_command(text: str) -> Command:
         "图片任务": "show_image_tasks",
         "导入图片目录": "import_image_dir",
         "批量绑定图片": "import_image_dir",
+        "准备视频片段": "prepare_video_segment",
+        "准备视频入参": "prepare_video_segment",
+        "导出视频片段入参": "prepare_video_segment",
+        "查看视频入参": "show_video_segment_payload",
+        "当前视频入参": "show_video_segment_payload",
+        "查看当前视频入参": "show_video_segment_payload",
         "合成整集": "assemble_episode",
         "拼接整集": "assemble_episode",
     }
