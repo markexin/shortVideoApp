@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import config
 from pipeline.llm_client import create_llm_client
 from pipeline.visual_style import (
+    CHINESE_CHARACTER_BOARD_STYLE,
     CHARACTER_REFERENCE_STYLE,
     CHARACTER_IDENTITY_LOCK,
     PROP_REFERENCE_STYLE,
@@ -39,6 +40,7 @@ def build_character_prompt(script: str, aspect_ratio: str = "9:16") -> str:
 
 统一参考图风格:
 - 人物: {CHARACTER_REFERENCE_STYLE}
+- 人物中文设定板格式: {CHINESE_CHARACTER_BOARD_STYLE}
 - 场景: {SCENE_REFERENCE_STYLE}
 - 道具: {PROP_REFERENCE_STYLE}
 - 统一负面词必须包含: {REFERENCE_NEGATIVE_PROMPT}
@@ -53,11 +55,11 @@ def build_character_prompt(script: str, aspect_ratio: str = "9:16") -> str:
     {{
       "name": "角色名",
       "description": "中文外观锚点，包含年龄段、性别、脸型、发型、服装、气质、标志物",
-      "style_prompt": "English visual style prompt, matching the drama genre and production style",
-      "turnaround_prompt": "English prompt for a character turnaround sheet with front view, side view, back view, same face/outfit/body",
-      "front_view_prompt": "English prompt for front view full body reference image",
-      "side_view_prompt": "English prompt for side view full body reference image",
-      "back_view_prompt": "English prompt for back view full body reference image",
+      "style_prompt": "中文风格确认，先确认项目题材与角色定位，再选择对应风格，例如 3D国风动漫、仙侠风格、次世代PBR材质渲染",
+      "turnaround_prompt": "中文人物三视图设定板 prompt，必须生成一张单人多视图角色设定板；同一张图片内同时包含正面全身、侧面全身、背面全身、面部特写、中文姓名标注",
+      "front_view_prompt": "中文正面全身角色参考图 prompt，同一张脸、同一服装、同一身材比例",
+      "side_view_prompt": "中文侧面全身角色参考图 prompt，同一张脸、同一服装、同一身材比例，只改变视角",
+      "back_view_prompt": "中文背面全身角色参考图 prompt，同一发型、同一服装、同一配饰，只改变视角",
       "consistency_prompt": "English image/video consistency prompt, stable face, hair, outfit, age, temperament",
       "negative_prompt": "English negative prompt, forbid hairstyle changes, age changes, outfit drift, face drift",
       "variants": [
@@ -65,10 +67,10 @@ def build_character_prompt(script: str, aspect_ratio: str = "9:16") -> str:
           "name": "阶段/造型名，例如 初期杂役 / 觉醒药师 / 魔化Boss",
           "story_stage": "出现范围，例如 第1-6集 / 第7集以后 / 终局",
           "description": "中文阶段造型描述。必须保持同一张脸，只改变剧情阶段允许变化的服装、伤痕、印记、气质或道具",
-          "turnaround_prompt": "English prompt for this specific stage/outfit turnaround sheet",
-          "front_view_prompt": "English prompt for front view of this stage/outfit",
-          "side_view_prompt": "English prompt for side view of this stage/outfit",
-          "back_view_prompt": "English prompt for back view of this stage/outfit",
+          "turnaround_prompt": "中文 prompt for this specific stage/outfit 三视图设定板；必须是一张图内包含正面全身、侧面全身、背面全身、面部特写",
+          "front_view_prompt": "中文 prompt for front view of this stage/outfit",
+          "side_view_prompt": "中文 prompt for side view of this stage/outfit",
+          "back_view_prompt": "中文 prompt for back view of this stage/outfit",
           "consistency_prompt": "English consistency prompt for this variant: same base face/hair/body, variant-specific outfit/mark",
           "negative_prompt": "English negative prompt forbidding other variants' clothes/marks"
         }}
@@ -102,7 +104,13 @@ def build_character_prompt(script: str, aspect_ratio: str = "9:16") -> str:
 - 场景只输出反复使用或视觉上关键的场景
 - 道具只输出剧情关键、反复出现或影响人物一致性的道具
 - 外观锚点必须具体、可画面化、可重复
+- 所有 prompt 字段必须控制在 200-300 字，任何单个 prompt 字段不得超过 300 字；保留最关键的身份锚点、服装、视角、风格和负面约束，删除重复套话
 - 每个角色必须给出三视图相关 prompt: turnaround/front/side/back
+- turnaround_prompt 必须生成一张单人多视图角色设定板，同一张图片内同时包含正面全身、侧面全身、背面全身、面部特写；front_view_prompt、side_view_prompt、back_view_prompt 是单独角度参考图
+- 先确认项目题材与角色定位，再选择对应风格；仙侠/国风/修仙角色必须使用 3D国风动漫、仙侠风格、次世代PBR材质渲染、高细节复杂纹理、柔和光影、高清写实国风质感
+- turnaround_prompt 必须优先使用中文，格式参考: 3D国风动漫，仙侠风格，单人角色设定图。角色名：角色名。年龄/性别/身份/面容/五官/发型/身材/服饰/配饰/道具/气质。纯净明亮背景，高精度人物三视图设定板，画面从左到右：正面全身、侧面全身、背面全身、面部特写。中文标注名字「角色名」。皮肤质感：肌肤细腻，可见自然毛孔与微瑕，次世代PBR材质渲染，高细节复杂纹理，柔和光影，高清写实国风质感，画面清新干净。
+- 中文标注名字「角色名」中的角色名必须替换成真实角色名，不能保留占位符
+- 三视图设定板必须明确是单人角色设定图，禁止多人、双人、剧情镜头或场景叙事构图；不要把 turnaround_prompt 写成单张正面图、剧情镜头或普通肖像
 - 如果同一个人物在剧情中有明显阶段变化、服装变化、觉醒/魔化/身份变化，必须拆成 variants，不要把两个时期混在一个 prompt 里
 - variants 至少覆盖脚本里反复出现或视觉差异明显的阶段；例如主角初期杂役袍与觉醒后药师袍必须拆成两个变体
 - 每个 variant 必须保持同一张基础脸、同一年龄段、同一核心发型/脸型/眼型，只改变该阶段允许改变的服装、印记状态、伤痕、气质和道具
@@ -147,16 +155,56 @@ def parse_characters_response(text: str) -> list[Character]:
 def parse_visual_bible_response(text: str) -> VisualBible:
     data = _parse_json_response(text)
     return VisualBible(
-        characters=[Character.from_dict(item) for item in data.get("characters", [])],
+        characters=[
+            _clamp_character_prompts(Character.from_dict(item))
+            for item in data.get("characters", [])
+        ],
         scenes=[
-            VisualAsset.from_dict({"category": "scene", **item})
+            _clamp_asset_prompts(VisualAsset.from_dict({"category": "scene", **item}))
             for item in data.get("scenes", [])
         ],
         props=[
-            VisualAsset.from_dict({"category": "prop", **item})
+            _clamp_asset_prompts(VisualAsset.from_dict({"category": "prop", **item}))
             for item in data.get("props", [])
         ],
     )
+
+
+def _clamp_character_prompts(character: Character, max_chars: int = 300) -> Character:
+    for field_name in (
+        "style_prompt",
+        "turnaround_prompt",
+        "front_view_prompt",
+        "side_view_prompt",
+        "back_view_prompt",
+        "consistency_prompt",
+        "negative_prompt",
+    ):
+        setattr(character, field_name, _clamp_text(getattr(character, field_name), max_chars))
+    for variant in character.variants:
+        for field_name in (
+            "turnaround_prompt",
+            "front_view_prompt",
+            "side_view_prompt",
+            "back_view_prompt",
+            "consistency_prompt",
+            "negative_prompt",
+        ):
+            setattr(variant, field_name, _clamp_text(getattr(variant, field_name), max_chars))
+    return character
+
+
+def _clamp_asset_prompts(asset: VisualAsset, max_chars: int = 300) -> VisualAsset:
+    for field_name in ("style_prompt", "image_prompt", "negative_prompt"):
+        setattr(asset, field_name, _clamp_text(getattr(asset, field_name), max_chars))
+    return asset
+
+
+def _clamp_text(value: str, max_chars: int) -> str:
+    text = value.strip()
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars].rstrip()
 
 
 def _parse_json_response(text: str) -> dict:

@@ -141,7 +141,7 @@ def test_visual_asset_generator_can_generate_one_character_variant(tmp_path):
     assert character.variants[1]["image_paths"]["turnaround"][0].endswith("turnaround.png")
 
 
-def test_character_variant_prompt_stays_under_liblib_limit():
+def test_character_variant_prompt_stays_under_generation_prompt_limit():
     detailed_costume = " ".join(["silver-white robe embroidery, translucent golden soul particles"] * 25)
     character = Character(
         name="玄丹老祖",

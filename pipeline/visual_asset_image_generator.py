@@ -5,7 +5,12 @@ import re
 from pathlib import Path
 
 from pipeline.image_generator import ImageAdapter, ImageGenerationRequest
-from pipeline.visual_style import compact_character_identity_lock, with_reference_negative, with_reference_style
+from pipeline.visual_style import (
+    character_view_board_prompt,
+    compact_character_identity_lock,
+    with_reference_negative,
+    with_reference_style,
+)
 from projects.schema import Character, VisualAsset
 
 
@@ -145,12 +150,18 @@ class VisualAssetImageGenerator:
             "back": _variant_get(source, "back_view_prompt") or character.back_view_prompt,
         }
         prompt = prompts.get(view) or character.turnaround_prompt or character.style_prompt or character.description
+        board_prompt = character_view_board_prompt(
+            character_name=character.name,
+            prompt=prompt,
+            description=character.description,
+            view=view,
+        )
         variant_description = _variant_get(source, "description")
         variant_consistency = _variant_get(source, "consistency_prompt")
         locked_prompt = " ".join(
             [
                 f"Variant: {_variant_get(source, 'name')}. Story stage: {_variant_get(source, 'story_stage')}." if source else "",
-                prompt,
+                board_prompt,
                 f"Variant-specific visual anchor: {variant_description}" if variant_description else "",
                 compact_character_identity_lock(
                     character_name=character.name,

@@ -39,63 +39,13 @@ LLM_MODEL=MiniMax-M3
 
 不要把真实 key 写入 `.env.example` 或提交到 git。
 
-### liblib.art 图片生成
-
-分镜图片可以用 `liblib.art` OpenAPI 生成。需要先在 liblib 后台准备可用的生图参数模板，然后把模板 UUID 和 API 凭证写入本地 `.env`:
-
-```bash
-IMAGE_PROVIDER=liblib
-LIBLIB_ACCESS_KEY=your_access_key
-LIBLIB_SECRET_KEY=your_secret_key
-LIBLIB_TEMPLATE_UUID=your_template_uuid
-LIBLIB_IMAGE_ENDPOINT=/api/generate/webui/text2img/ultra
-```
-
-CLI 中选择 `生成图片` 后，会把每个分镜的图片 prompt 提交给 liblib，轮询任务状态，并把结果保存到当前项目的 `images/shots/shot_001.png` 这类路径。画幅会使用剧本项目里的 `9:16` 或 `16:9` 自动换算成对应尺寸。
-
-`LIBLIB_TEMPLATE_UUID` 是 liblib OpenAPI 的参数模板 UUID，不是模型广场页面 URL 里的数字 ID。`LIBLIB_IMAGE_ENDPOINT=/api/generate/webui/text2img/ultra` 使用旗舰版模板生图；如果要指定普通 SD checkpoint 或 LoRA，改用:
-
-```bash
-LIBLIB_IMAGE_ENDPOINT=/api/generate/webui/text2img
-LIBLIB_TEMPLATE_UUID=your_template_uuid
-LIBLIB_CHECKPOINT_ID=your_checkpoint_uuid
-LIBLIB_LORA_MODEL_ID=your_lora_uuid
-LIBLIB_LORA_WEIGHT=0.8
-```
-
-`LIBLIB_CHECKPOINT_ID` 从 liblib OpenAPI 提供的 Checkpoint 列表/模型版本信息里取；`LIBLIB_LORA_MODEL_ID` 从 LoRA 模型版本信息里取。模型广场链接里的 `id=...` 通常只是网页模型 ID，不能直接当作 OpenAPI 的 UUID 使用。
-
-可以按图片任务类型细粒度覆盖模型和张数。留空时会回退到通用 `LIBLIB_*` 配置:
-
-```bash
-# 人物参考图
-LIBLIB_CHARACTER_TEMPLATE_UUID=
-LIBLIB_CHARACTER_CHECKPOINT_ID=
-LIBLIB_CHARACTER_LORA_MODEL_ID=
-LIBLIB_CHARACTER_IMG_COUNT=1
-
-# 场景参考图
-LIBLIB_SCENE_TEMPLATE_UUID=
-LIBLIB_SCENE_CHECKPOINT_ID=
-LIBLIB_SCENE_LORA_MODEL_ID=
-LIBLIB_SCENE_IMG_COUNT=1
-
-# 分镜图
-LIBLIB_SHOT_TEMPLATE_UUID=
-LIBLIB_SHOT_CHECKPOINT_ID=
-LIBLIB_SHOT_LORA_MODEL_ID=
-LIBLIB_SHOT_IMG_COUNT=1
-```
-
-CLI 支持先小批量试效果:
+当前版本不内置文生图 provider。CLI 支持导出图片提示词和批量绑定外部生成好的图片:
 
 ```text
-生成角色图片        # 会询问生成前几个，默认 5 个
-生成前5个角色图片
-生成第1个角色图片
-生成第2个场景图片
-生成第3个道具图片
-生成图片            # 生成分镜图片
+导出图片提示词
+查看图片任务
+第3镜图片: /Users/you/images/shot_003.png
+导入图片目录
 ```
 
 ## 启动问答式智能体

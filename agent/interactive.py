@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 
 from rich.console import Console
@@ -17,17 +16,13 @@ from pipeline.character_bible import VisualBible, generate_visual_bible
 from pipeline.drama_storyboard import generate_drama_storyboard
 from pipeline.episode_assembler import assemble_episode
 from pipeline.generator import VideoGenerator
-from pipeline.image_generator import ShotImageGenerator
 from pipeline.prompt_builder import build_image_prompt
 from pipeline.script_structure_repair import repair_episode_numbering
 from pipeline.script_writer import ScriptGenerationCheckpoint, generate_script_reflectively
 from pipeline.script_validator import validate_script_completeness
-from pipeline.visual_asset_image_generator import VisualAssetImageGenerator
 from pipeline.visual_style import character_identity_lock, with_reference_negative, with_reference_style
 from projects.manager import ProjectManager
 from projects.schema import Character, Project, Shot, now_iso
-from workflows.comfyui_image import ComfyUIImageAdapter, validate_image_workflow
-from workflows.liblib_image import LiblibImageAdapter
 
 
 console = Console()
@@ -110,10 +105,6 @@ class ShortDramaAgent:
             "generate_storyboard": self._handle_generate_storyboard,
             "export_image_prompts": self._handle_export_image_prompts,
             "show_image_tasks": self._handle_show_image_tasks,
-            "generate_images": self._handle_generate_images,
-            "generate_character_images": self._handle_generate_character_images,
-            "generate_scene_images": self._handle_generate_scene_images,
-            "generate_prop_images": self._handle_generate_prop_images,
             "import_image_dir": self._handle_import_image_dir,
             "assemble_episode": self._handle_assemble_episode,
             "set_shot_image": self._handle_set_shot_image,
@@ -401,188 +392,6 @@ class ShortDramaAgent:
             console.print(f"... 还有 {len(project.shots) - len(rows)} 个图片任务，详见任务表。")
         self._print_project_menu()
 
-    def _handle_generate_images(self, command: Command) -> None:
-        project = self._require_project()
-        if not project:
-            return
-        adapter = self._create_image_adapter("shot")
-        if not adapter:
-            self._print_project_menu()
-            return
-        output_dir = self.manager.project_dir(project.project_id) / "images" / "shots"
-        task_config = config.liblib_task_config("shot") if getattr(config, "IMAGE_PROVIDER", "comfyui") == "liblib" else {"img_count": 1}
-        generator = ShotImageGenerator(output_dir=output_dir, adapter=adapter, img_count=task_config["img_count"])
-        provider = getattr(config, "IMAGE_PROVIDER", "comfyui")
-        console.print(f"[cyan]开始调用 {provider} 生成分镜图片...[/cyan]")
-        results = asyncio.run(
-            generator.generate_all(
-                shots=project.shots,
-                characters=project.characters,
-                aspect_ratio=project.aspect_ratio,
-            )
-        )
-        success = sum(1 for result in results if result.get("status") == "success")
-        failed = len(results) - success
-        project.updated_at = now_iso()
-        self.manager.save_project(project)
-        console.print(f"[green]图片生成完成:[/green] 成功 {success}，失败 {failed}。")
-        if failed:
-            for result in results:
-                if result.get("status") != "success":
-                    console.print(f"[red]失败:[/red] {result.get('error')}")
-        self._print_project_menu()
-
-    def _handle_generate_character_images(self, command: Command) -> None:
-        self._generate_visual_asset_images("character", command)
-
-    def _handle_generate_scene_images(self, command: Command) -> None:
-        self._generate_visual_asset_images("scene", command)
-
-    def _handle_generate_prop_images(self, command: Command) -> None:
-        self._generate_visual_asset_images("prop", command)
-
-    def _generate_visual_asset_images(self, task_type: str, command: Command) -> None:
-        project = self._require_project()
-        if not project:
-            return
-        adapter = self._create_image_adapter(task_type)
-        if not adapter:
-            self._print_project_menu()
-            return
-        task_config = config.liblib_task_config(task_type) if getattr(config, "IMAGE_PROVIDER", "comfyui") == "liblib" else {"img_count": 1}
-        limit = command.args.get("limit")
-        index = command.args.get("index")
-        variant_index = command.args.get("variant_index")
-        if limit is None and index is None:
-            raw = read_text("生成范围：输入数量生成前N个，输入 #序号 生成单个；角色可输入 #角色序号.变体序号，例如 #1.2；直接回车生成前5个 [5]: ").strip()
-            if raw.startswith("#"):
-                index, variant_index = self._parse_asset_selection(raw)
-            elif raw:
-                try:
-                    limit = int(raw)
-                except ValueError:
-                    limit = 5
-            else:
-                limit = 5
-        output_dir = self.manager.project_dir(project.project_id) / "images" / "assets"
-        generator = VisualAssetImageGenerator(output_dir=output_dir, adapter=adapter)
-        label = {"character": "角色", "scene": "场景", "prop": "道具"}[task_type]
-        console.print(f"[cyan]开始生成{label}图片...[/cyan]")
-        if task_type == "character":
-            results = asyncio.run(
-                generator.generate_characters(
-                    characters=project.characters,
-                    aspect_ratio=task_config["aspect_ratio"] or project.aspect_ratio,
-                    limit=limit,
-                    index=index,
-                    variant_index=variant_index,
-                    img_count=task_config["img_count"],
-                    width=task_config["width"] or None,
-                    height=task_config["height"] or None,
-                )
-            )
-        else:
-            results = asyncio.run(
-                generator.generate_assets(
-                    assets=project.visual_assets,
-                    category=task_type,
-                    aspect_ratio=task_config["aspect_ratio"] or project.aspect_ratio,
-                    limit=limit,
-                    index=index,
-                    img_count=task_config["img_count"],
-                    width=task_config["width"] or None,
-                    height=task_config["height"] or None,
-                )
-            )
-        success = sum(1 for result in results if result.get("status") == "success")
-        failed = len(results) - success
-        project.updated_at = now_iso()
-        self.manager.save_project(project)
-        console.print(f"[green]{label}图片生成完成:[/green] 成功 {success}，失败 {failed}。")
-        if failed:
-            for result in results:
-                if result.get("status") != "success":
-                    console.print(f"[red]失败:[/red] {result.get('error')}")
-        self._print_project_menu()
-
-    @staticmethod
-    def _parse_asset_selection(raw: str) -> tuple[int | None, int | None]:
-        value = raw.strip().lstrip("#").strip()
-        if not value:
-            return None, None
-        parts = value.split(".", 1)
-        try:
-            index = int(parts[0])
-        except ValueError:
-            return None, None
-        if len(parts) == 1:
-            return index, None
-        try:
-            return index, int(parts[1])
-        except ValueError:
-            return index, None
-
-    def _create_image_adapter(self, task_type: str = "shot"):
-        provider = getattr(config, "IMAGE_PROVIDER", "comfyui").lower()
-        if provider == "liblib":
-            task_config = config.liblib_task_config(task_type)
-            missing = [
-                name
-                for name in ("LIBLIB_ACCESS_KEY", "LIBLIB_SECRET_KEY", "LIBLIB_TEMPLATE_UUID")
-                if not getattr(config, name, "") and name != "LIBLIB_TEMPLATE_UUID"
-            ]
-            if not task_config["template_uuid"]:
-                missing.append(f"LIBLIB_{task_type.upper()}_TEMPLATE_UUID 或 LIBLIB_TEMPLATE_UUID")
-            if task_config["endpoint"] == "/api/generate/webui/text2img" and not task_config["checkpoint_id"]:
-                missing.append(f"LIBLIB_{task_type.upper()}_CHECKPOINT_ID 或 LIBLIB_CHECKPOINT_ID")
-            if missing:
-                console.print("[red]还没有配置 liblib.art 生图。[/red]")
-                console.print(f"请在 `.env` 中补齐: {', '.join(missing)}")
-                console.print("可按任务类型覆盖: LIBLIB_CHARACTER_* / LIBLIB_SCENE_* / LIBLIB_PROP_* / LIBLIB_SHOT_*。")
-                return None
-            return LiblibImageAdapter(
-                access_key=config.LIBLIB_ACCESS_KEY,
-                secret_key=config.LIBLIB_SECRET_KEY,
-                template_uuid=task_config["template_uuid"],
-                base_url=config.LIBLIB_BASE_URL,
-                endpoint=task_config["endpoint"],
-                status_endpoint=config.LIBLIB_STATUS_ENDPOINT,
-                timeout=config.LIBLIB_TIMEOUT,
-                poll_interval=config.LIBLIB_POLL_INTERVAL,
-                checkpoint_id=task_config["checkpoint_id"],
-                lora_model_id=task_config["lora_model_id"],
-                lora_weight=task_config["lora_weight"],
-                sampler=task_config["sampler"],
-                steps=task_config["steps"],
-                cfg_scale=task_config["cfg_scale"],
-                clip_skip=task_config["clip_skip"],
-            )
-        if provider != "comfyui":
-            console.print(f"[red]不支持的图片生成 provider:[/red] {provider}")
-            console.print("请设置 `IMAGE_PROVIDER=comfyui` 或 `IMAGE_PROVIDER=liblib`。")
-            return None
-        workflow_path = getattr(config, "COMFYUI_IMAGE_WORKFLOW_PATH", "")
-        if not workflow_path:
-            console.print("[red]还没有配置 ComfyUI 文生图工作流。[/red]")
-            console.print("请在 `.env` 中配置 `COMFYUI_IMAGE_WORKFLOW_PATH=examples/你的图片工作流.json`。")
-            console.print("图片工作流需支持占位符: __PROMPT__ / __NEGATIVE_PROMPT__ / __OUTPUT_PREFIX__ / __WIDTH__ / __HEIGHT__。")
-            return None
-        if not Path(workflow_path).exists():
-            console.print(f"[red]图片工作流不存在:[/red] {workflow_path}")
-            return None
-        workflow = json.loads(Path(workflow_path).read_text(encoding="utf-8"))
-        validation_error = validate_image_workflow(workflow)
-        if validation_error:
-            console.print(f"[red]图片工作流不可用:[/red] {validation_error}")
-            console.print("需要一个 ComfyUI 文生图 API workflow，至少包含正向 prompt、反向 prompt、采样、解码、SaveImage。")
-            console.print("请把真实工作流导出为 API JSON，并把 prompt/negative/output/width/height 替换为对应占位符。")
-            return None
-        return ComfyUIImageAdapter(
-            base_url=config.COMFYUI_BASE_URL,
-            workflow_path=workflow_path,
-            timeout=config.GENERATION_TIMEOUT,
-        )
-
     def _handle_import_image_dir(self, command: Command) -> None:
         project = self._require_project()
         if not project:
@@ -637,7 +446,7 @@ class ShortDramaAgent:
             manifest = self.export_image_task_manifest()
             console.print("[red]不能生成全部视频: 还有分镜缺少图片。[/red]")
             console.print(f"缺少图片: {self._format_episode_ranges(missing)}")
-            console.print(f"请先按图片任务表生成图片并导入: {manifest}")
+            console.print(f"请先按图片任务表在外部生成图片并导入: {manifest}")
             self._print_project_menu()
             return
         generator = VideoGenerator(self.manager.project_dir(project.project_id) / "videos")
@@ -932,20 +741,27 @@ class ShortDramaAgent:
     def _save_visual_bible_prompts(self, project: Project) -> None:
         prompt_dir = self.manager.project_dir(project.project_id) / "prompts"
         prompt_dir.mkdir(parents=True, exist_ok=True)
-        lines = [f"# {project.title} 视觉资产圣经", "", "## 统一参考风格", "", with_reference_style("", "shot"), ""]
+        lines = [
+            f"# {project.title} 视觉资产圣经",
+            "",
+            "## 统一参考风格",
+            "",
+            self._export_prompt_text(with_reference_style("", "shot")),
+            "",
+        ]
         for character in project.characters:
             lines.extend(
                 [
                     f"## 角色: {character.name}",
                     f"- 基础描述: {character.description}",
-                    f"- 身份锁定: {character_identity_lock(character.name, character.description, character.consistency_prompt)}",
-                    f"- 风格: {with_reference_style(character.style_prompt, 'character')}",
-                    f"- 三视图: {with_reference_style(character.turnaround_prompt, 'character')}",
-                    f"- 正面图: {with_reference_style(character.front_view_prompt, 'character')}",
-                    f"- 侧面图: {with_reference_style(character.side_view_prompt, 'character')}",
-                    f"- 背面图: {with_reference_style(character.back_view_prompt, 'character')}",
-                    f"- 一致性: {character.consistency_prompt}",
-                    f"- 负面词: {with_reference_negative(character.negative_prompt)}",
+                    f"- 身份锁定: {self._export_prompt_text(character_identity_lock(character.name, character.description, character.consistency_prompt))}",
+                    f"- 风格: {self._export_prompt_text(character.style_prompt)}",
+                    f"- 三视图: {self._export_prompt_text(character.turnaround_prompt)}",
+                    f"- 正面图: {self._export_prompt_text(character.front_view_prompt)}",
+                    f"- 侧面图: {self._export_prompt_text(character.side_view_prompt)}",
+                    f"- 背面图: {self._export_prompt_text(character.back_view_prompt)}",
+                    f"- 一致性: {self._export_prompt_text(character.consistency_prompt)}",
+                    f"- 负面词: {self._export_prompt_text(with_reference_negative(character.negative_prompt))}",
                     "",
                 ]
             )
@@ -960,13 +776,13 @@ class ShortDramaAgent:
                         f"### 角色变体 {variant_index}: {variant.name}",
                         f"- 阶段: {variant.story_stage}",
                         f"- 描述: {variant.description}",
-                        f"- 身份锁定: {variant_lock}",
-                        f"- 三视图: {with_reference_style(self._join_prompt_parts(variant.turnaround_prompt, variant_lock), 'character')}",
-                        f"- 正面图: {with_reference_style(self._join_prompt_parts(variant.front_view_prompt, self._front_view_lock(), variant_lock), 'character')}",
-                        f"- 侧面图: {with_reference_style(self._join_prompt_parts(variant.side_view_prompt, self._side_view_lock(), variant_lock), 'character')}",
-                        f"- 背面图: {with_reference_style(self._join_prompt_parts(variant.back_view_prompt, self._back_view_lock(), variant_lock), 'character')}",
-                        f"- 一致性: {variant.consistency_prompt}",
-                        f"- 负面词: {with_reference_negative(variant.negative_prompt)}",
+                        f"- 身份锁定: {self._export_prompt_text(variant_lock)}",
+                        f"- 三视图: {self._export_prompt_text(variant.turnaround_prompt)}",
+                        f"- 正面图: {self._export_prompt_text(self._join_prompt_parts(variant.front_view_prompt, self._front_view_lock()))}",
+                        f"- 侧面图: {self._export_prompt_text(self._join_prompt_parts(variant.side_view_prompt, self._side_view_lock()))}",
+                        f"- 背面图: {self._export_prompt_text(self._join_prompt_parts(variant.back_view_prompt, self._back_view_lock()))}",
+                        f"- 一致性: {self._export_prompt_text(variant.consistency_prompt)}",
+                        f"- 负面词: {self._export_prompt_text(with_reference_negative(variant.negative_prompt))}",
                         f"- 已生成图片: {sum(len(paths) for paths in variant.image_paths.values()) if variant.image_paths else 0} 张",
                         "",
                     ]
@@ -978,9 +794,9 @@ class ShortDramaAgent:
                 [
                     f"## {title}: {asset.name}",
                     f"- 描述: {asset.description}",
-                    f"- 风格: {with_reference_style(asset.style_prompt, category)}",
-                    f"- 图片Prompt: {with_reference_style(asset.image_prompt, category)}",
-                    f"- 负面词: {with_reference_negative(asset.negative_prompt)}",
+                    f"- 风格: {self._export_prompt_text(asset.style_prompt)}",
+                    f"- 图片Prompt: {self._export_prompt_text(asset.image_prompt)}",
+                    f"- 负面词: {self._export_prompt_text(with_reference_negative(asset.negative_prompt))}",
                     f"- 用途: {asset.purpose}",
                     "",
                 ]
@@ -992,6 +808,25 @@ class ShortDramaAgent:
     @staticmethod
     def _join_prompt_parts(*parts: str) -> str:
         return " ".join(part.strip() for part in parts if part and part.strip())
+
+    @staticmethod
+    def _export_prompt_text(text: str, max_chars: int = 300) -> str:
+        value = text.strip()
+        if len(value) <= max_chars:
+            return value
+        return value[:max_chars].rstrip()
+
+    @staticmethod
+    def _count_reference_images(project: Project) -> tuple[int, int]:
+        character_images = 0
+        for character in project.characters:
+            character_images += sum(len(paths) for paths in character.image_paths.values())
+            character_images += sum(
+                sum(len(paths) for paths in variant.image_paths.values())
+                for variant in character.variants
+            )
+        asset_images = sum(len(asset.image_paths) for asset in project.visual_assets)
+        return character_images, asset_images
 
     @staticmethod
     def _front_view_lock() -> str:
@@ -1239,7 +1074,9 @@ class ShortDramaAgent:
         table.add_row("集数/单集", f"{project.episode_count} 集 / {project.seconds_per_episode} 秒")
         table.add_row("受众/节奏", f"{project.audience} / {project.pacing_style}")
         table.add_row("角色/资产/分镜", f"{len(project.characters)} / {len(project.visual_assets)} / {len(project.shots)}")
-        table.add_row("图片/视频", f"{image_ready}/{len(project.shots)} / {video_ready}/{len(project.shots)}")
+        character_images, asset_images = self._count_reference_images(project)
+        table.add_row("角色/资产图片", f"{character_images} / {asset_images}")
+        table.add_row("分镜图片/视频", f"{image_ready}/{len(project.shots)} / {video_ready}/{len(project.shots)}")
         validation = validate_script_completeness(project)
         table.add_row(
             "脚本完整性",
@@ -1308,7 +1145,7 @@ class ShortDramaAgent:
         console.print(table)
         variant_count = sum(len(character.variants) for character in project.characters)
         if variant_count:
-            console.print(f"[cyan]角色阶段变体:[/cyan] {variant_count} 个。生成角色图片时会按变体分别生成。")
+            console.print(f"[cyan]角色阶段变体:[/cyan] {variant_count} 个。后续接入生图 API 时应按变体分别生成。")
         if len(project.characters) > len(rows):
             console.print(f"... 还有 {len(project.characters) - len(rows)} 个角色，输入 `查看角色` 显示完整列表。")
         if project.visual_assets:

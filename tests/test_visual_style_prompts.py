@@ -46,6 +46,25 @@ def test_visual_asset_generator_wraps_character_prompt_with_reference_style():
     assert len(prompt) <= 1900
 
 
+def test_character_turnaround_prompt_is_expanded_to_chinese_three_view_sheet():
+    character = Character(
+        name="虞清商",
+        description="青年女性乐修仙君，25岁左右，凤眸微垂，瞳色如琉璃清透微紫，墨黑长发及膝，月白渐变淡紫广袖纱袍，怀抱焦桐古琴。",
+        turnaround_prompt="仙侠乐修角色设定",
+        consistency_prompt="same elegant face, same translucent purple eyes, same long black hair, same pale purple hanfu, same guqin",
+    )
+
+    prompt = VisualAssetImageGenerator._character_prompt(character, "turnaround")
+
+    assert "3D国风动漫，仙侠风格，单人角色设定图" in prompt
+    assert "高精度人物三视图设定板" in prompt
+    assert "画面从左到右：正面全身、侧面全身、背面全身、面部特写" in prompt
+    assert "中文标注名字「虞清商」" in prompt
+    assert "次世代PBR材质渲染" in prompt
+    assert "same elegant face" in prompt
+    assert len(prompt) <= 1900
+
+
 def test_shot_prompt_includes_strict_identity_lock_for_characters():
     prompt = build_image_prompt(
         Shot(
@@ -70,7 +89,7 @@ def test_shot_prompt_includes_strict_identity_lock_for_characters():
     assert "same skull structure" in prompt
 
 
-def test_character_prompt_stays_under_liblib_prompt_limit_for_long_identity():
+def test_character_prompt_stays_under_generation_prompt_limit_for_long_identity():
     character = Character(
         name="林辰（主角·废灵根杂役→药神体觉醒者）",
         description=(

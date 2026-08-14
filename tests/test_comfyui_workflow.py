@@ -7,7 +7,6 @@ from workflows.comfyui import (
     apply_workflow_placeholders,
     pick_output_file,
 )
-from workflows.comfyui_image import apply_image_workflow_placeholders, validate_image_workflow
 
 
 def test_apply_workflow_placeholders_replaces_nested_values():
@@ -49,42 +48,3 @@ def test_pick_output_file_prefers_video_over_image():
 
     assert output["filename"] == "result.mp4"
     assert output["subfolder"] == "vid"
-
-
-def test_apply_image_workflow_placeholders_sets_prompt_and_size():
-    workflow = {
-        "1": {"inputs": {"text": "__PROMPT__"}},
-        "2": {"inputs": {"text": "__NEGATIVE_PROMPT__"}},
-        "3": {"inputs": {"filename_prefix": "__OUTPUT_PREFIX__"}},
-        "4": {"inputs": {"width": "__WIDTH__", "height": "__HEIGHT__"}},
-    }
-
-    updated = apply_image_workflow_placeholders(
-        workflow,
-        prompt="hero portrait",
-        negative_prompt="no watermark",
-        output_prefix="shot_001",
-        aspect_ratio="9:16",
-    )
-
-    assert updated["1"]["inputs"]["text"] == "hero portrait"
-    assert updated["2"]["inputs"]["text"] == "no watermark"
-    assert updated["3"]["inputs"]["filename_prefix"] == "shot_001"
-    assert updated["4"]["inputs"]["width"] == 1080
-    assert updated["4"]["inputs"]["height"] == 1920
-
-
-def test_validate_image_workflow_rejects_placeholder_example():
-    workflow = {
-        "1": {"class_type": "LoadImage", "inputs": {"image": "__IMAGE_NAME__"}},
-        "4": {"class_type": "VHS_VideoCombine", "inputs": {"filename_prefix": "__OUTPUT_PREFIX__"}},
-        "5": {
-            "class_type": "Note",
-            "inputs": {"text": "This is not a runnable workflow by itself."},
-        },
-    }
-
-    error = validate_image_workflow(workflow)
-
-    assert error
-    assert "不是可执行的文生图工作流" in error
