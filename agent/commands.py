@@ -69,6 +69,13 @@ def parse_command(text: str) -> Command:
         "查看视频入参": "show_video_segment_payload",
         "当前视频入参": "show_video_segment_payload",
         "查看当前视频入参": "show_video_segment_payload",
+        "生成当前视频片段": "generate_video_segment",
+        "生成视频片段": "generate_video_segment",
+        "用msr生成视频": "generate_video_segment",
+        "用msr工作流生成视频": "generate_video_segment",
+        "用minimax生成视频": "generate_minimax_video_segment",
+        "用minimax参考图生成视频": "generate_minimax_video_segment",
+        "minimax生成视频": "generate_minimax_video_segment",
         "合成整集": "assemble_episode",
         "拼接整集": "assemble_episode",
     }

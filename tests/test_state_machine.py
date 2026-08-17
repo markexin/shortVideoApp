@@ -30,4 +30,5 @@ def test_available_actions_for_storyboard_ready():
     assert "export_image_prompts" in command_names
     assert "prepare_video_segment" in command_names
     assert "show_video_segment_payload" in command_names
+    assert "generate_video_segment" in command_names
     assert "status" in command_names

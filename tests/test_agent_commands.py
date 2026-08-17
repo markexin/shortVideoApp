@@ -41,6 +41,9 @@ def test_parse_short_drama_flow_commands():
     assert parse_command("准备视频入参").name == "prepare_video_segment"
     assert parse_command("查看视频入参").name == "show_video_segment_payload"
     assert parse_command("当前视频入参").name == "show_video_segment_payload"
+    assert parse_command("生成当前视频片段").name == "generate_video_segment"
+    assert parse_command("用MSR工作流生成视频").name == "generate_video_segment"
+    assert parse_command("用MiniMax参考图生成视频").name == "generate_minimax_video_segment"
     assert parse_command("合成整集").name == "assemble_episode"
 
 
@@ -66,6 +69,8 @@ def test_parse_contextual_numbers_use_current_project_menu_first():
     assert parse_contextual_command("4", "image_prompts_exported").name == "show_image_tasks"
     assert parse_contextual_command("12", "storyboard_ready").name == "prepare_video_segment"
     assert parse_contextual_command("13", "storyboard_ready").name == "show_video_segment_payload"
+    assert parse_contextual_command("14", "storyboard_ready").name == "generate_video_segment"
+    assert parse_contextual_command("16", "storyboard_ready").name == "generate_minimax_video_segment"
     assert parse_contextual_command("15", "image_prompts_exported").name == "import_image_dir"
 
 

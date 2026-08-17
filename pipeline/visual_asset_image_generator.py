@@ -94,7 +94,7 @@ class VisualAssetImageGenerator:
         prompt = self._character_prompt(character, view, variant=variant)
         character_dir = self.output_dir / "characters" / f"{order:03d}_{safe_name(character.name)}"
         if variant:
-            character_dir = character_dir / f"{variant_index:02d}_{safe_name(str(_variant_get(variant, 'name', 'variant')))}"
+            character_dir = character_dir / f"{variant_index:02d}_{safe_name(_variant_dir_name(variant))}"
         output_path = character_dir / f"{view}.png"
         request = ImageGenerationRequest(
             shot_id=order,
@@ -207,6 +207,18 @@ def _variant_get(variant, key: str, default: str = ""):
     if isinstance(variant, dict):
         return variant.get(key, default)
     return getattr(variant, key, default)
+
+
+def _variant_dir_name(variant) -> str:
+    name = str(_variant_get(variant, "name", "variant"))
+    story_stage = str(_variant_get(variant, "story_stage", ""))
+    match = re.search(r"第\s*\d+\s*[-至到—~～]\s*\d+\s*集", f"{name} {story_stage}")
+    if not match:
+        match = re.search(r"第\s*\d+\s*集(?:以后|之后|起)?", f"{name} {story_stage}")
+    if not match:
+        return name
+    stage = re.sub(r"\s+", "", match.group(0))
+    return f"{name}_{stage}" if stage not in name else name
 
 
 def _variant_image_paths(variant) -> dict[str, list[str]]:

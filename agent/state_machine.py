@@ -53,6 +53,8 @@ STEP_ACTIONS = {
         Action("5", "导出图片提示词", "export_image_prompts", "导出图片提示词"),
         Action("12", "准备下一段视频入参", "prepare_video_segment", "准备视频片段"),
         Action("13", "查看当前视频入参", "show_video_segment_payload", "查看视频入参"),
+        Action("14", "用 MSR 工作流生成当前视频片段", "generate_video_segment", "生成视频片段"),
+        Action("16", "用 MiniMax 参考图生成当前片段", "generate_minimax_video_segment", "MiniMax生成视频"),
     ],
     "image_prompts_exported": [
         Action("1", "查看脚本内容", "show_script", "查看脚本"),
@@ -61,6 +63,8 @@ STEP_ACTIONS = {
         Action("4", "查看/导出图片任务", "show_image_tasks", "查看图片任务"),
         Action("12", "准备下一段视频入参", "prepare_video_segment", "准备视频片段"),
         Action("13", "查看当前视频入参", "show_video_segment_payload", "查看视频入参"),
+        Action("14", "用 MSR 工作流生成当前视频片段", "generate_video_segment", "生成视频片段"),
+        Action("16", "用 MiniMax 参考图生成当前片段", "generate_minimax_video_segment", "MiniMax生成视频"),
         Action("15", "批量绑定已生成图片目录", "import_image_dir", "导入图片目录"),
         Action("8", "图片已准备后生成全部视频", "generate_all", "生成全部"),
     ],
@@ -69,6 +73,8 @@ STEP_ACTIONS = {
         Action("2", "查看角色圣经", "show_characters", "查看角色"),
         Action("3", "查看分镜摘要", "show_storyboard", "查看分镜"),
         Action("13", "查看当前视频入参", "show_video_segment_payload", "查看视频入参"),
+        Action("14", "用 MSR 工作流生成当前视频片段", "generate_video_segment", "生成视频片段"),
+        Action("16", "用 MiniMax 参考图生成当前片段", "generate_minimax_video_segment", "MiniMax生成视频"),
         Action("9", "合成整集", "assemble_episode", "合成整集"),
     ],
     "episode_ready": [
@@ -76,6 +82,8 @@ STEP_ACTIONS = {
         Action("2", "查看角色圣经", "show_characters", "查看角色"),
         Action("3", "查看分镜摘要", "show_storyboard", "查看分镜"),
         Action("13", "查看当前视频入参", "show_video_segment_payload", "查看视频入参"),
+        Action("14", "用 MSR 工作流生成当前视频片段", "generate_video_segment", "生成视频片段"),
+        Action("16", "用 MiniMax 参考图生成当前片段", "generate_minimax_video_segment", "MiniMax生成视频"),
         Action("9", "重新合成整集", "assemble_episode", "合成整集"),
     ],
 }

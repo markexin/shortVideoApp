@@ -5,10 +5,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from pipeline.video_segment_preparer import (
     find_latest_video_segment_payload,
+    prepare_video_segment_window_payloads,
     prepare_next_video_segment_payload,
     prepare_video_segment_payload,
+    video_segment_windows,
 )
-from projects.schema import Character, Project, Shot, VisualAsset
+from projects.schema import Character, CharacterVariant, Project, Shot, VisualAsset
 
 
 def test_prepare_video_segment_payload_uses_base_assets_without_shot_images():
@@ -178,7 +180,7 @@ def test_prepare_payload_discovers_base_asset_images_from_project_directory(tmp_
 """,
             }
         ],
-        shots=[Shot(shot_id=1, scene_description="青石台阶", duration=4)],
+        shots=[Shot(shot_id=1, scene_description="青石台阶", characters=["林辰"], duration=4)],
     )
 
     payload = prepare_next_video_segment_payload(project, project_dir=project_dir)
@@ -227,6 +229,69 @@ def test_prepare_payload_normalizes_relative_asset_paths_to_absolute(tmp_path):
     assert all(Path(path).exists() for path in character_paths)
 
 
+def test_prepare_payload_selects_character_variant_for_episode():
+    project = Project(
+        project_id="p1",
+        title="废柴药师，逆伐仙门",
+        script_units=[
+            {
+                "episode": 1,
+                "content": """**【0-15秒 · 起】**
+- 画面：青石台阶。
+""",
+            }
+        ],
+        characters=[
+            Character(
+                name="林辰",
+                variants=[
+                    CharacterVariant(
+                        name="初期杂役（第1-6集）",
+                        story_stage="第1-6集：觉醒前与刚觉醒的杂役阶段",
+                        image_paths={"turnaround": ["/assets/linchen-servant.png"]},
+                    ),
+                    CharacterVariant(
+                        name="觉醒药师（第7-28集）",
+                        story_stage="第7-28集：炼丹大会成名至决战前",
+                        image_paths={"turnaround": ["/assets/linchen-alchemist.png"]},
+                    ),
+                ],
+            ),
+            Character(
+                name="周玄",
+                image_paths={"turnaround": ["/assets/zhouxuan-white.png"]},
+                variants=[
+                    CharacterVariant(
+                        name="紫袍长老（第14-17集）",
+                        story_stage="第14-17集：继任长老",
+                        image_paths={"turnaround": ["/assets/zhouxuan-purple.png"]},
+                    )
+                ],
+            ),
+            Character(name="苏婉", image_paths={"turnaround": ["/assets/suwan.png"]}),
+        ],
+        shots=[
+            Shot(shot_id=1, scene_description="林辰被踩", characters=["林辰", "周玄"], duration=4),
+            Shot(shot_id=2, scene_description="围观", characters=["内门弟子"], duration=5),
+        ],
+    )
+
+    payload = prepare_next_video_segment_payload(project)
+
+    assert payload["selected_characters"] == ["林辰", "周玄", "内门弟子"]
+    assert payload["base_images"]["characters"] == [
+        "/assets/linchen-servant.png",
+        "/assets/zhouxuan-white.png",
+    ]
+
+    later_payload = prepare_video_segment_payload(project, episode=20, start_sec=0, end_sec=15)
+
+    assert later_payload["base_images"]["characters"] == [
+        "/assets/linchen-alchemist.png",
+        "/assets/zhouxuan-white.png",
+    ]
+
+
 def test_find_latest_video_segment_payload_returns_newest_payload(tmp_path):
     prompt_dir = tmp_path / "prompts"
     prompt_dir.mkdir()
@@ -236,3 +301,80 @@ def test_find_latest_video_segment_payload_returns_newest_payload(tmp_path):
     new_payload.write_text("{}", encoding="utf-8")
 
     assert find_latest_video_segment_payload(tmp_path) == new_payload
+
+
+def test_video_segment_windows_split_episode_by_fixed_duration():
+    project = Project(
+        project_id="p1",
+        title="废柴药师，逆伐仙门",
+        script_units=[
+            {
+                "episode": 1,
+                "content": """**【0-15秒 · 起】**
+- 画面：林辰被踩。
+
+**【16-90秒 · 承】**
+- 画面：周玄逼吞废丹。
+""",
+            }
+        ],
+    )
+
+    windows = video_segment_windows(project, episode=1, window_seconds=6, end_sec=30)
+
+    assert windows == [
+        (1, 0, 6),
+        (1, 6, 12),
+        (1, 12, 18),
+        (1, 18, 24),
+        (1, 24, 30),
+    ]
+
+
+def test_prepare_video_segment_window_payloads_include_window_metadata_and_overlap_script():
+    project = Project(
+        project_id="p1",
+        title="废柴药师，逆伐仙门",
+        script_units=[
+            {
+                "episode": 1,
+                "content": """**【0-15秒 · 起】**
+- 画面：林辰被踩。
+
+**【16-90秒 · 承】**
+- 画面：周玄逼吞废丹。
+""",
+            }
+        ],
+        characters=[
+            Character(name="林辰", image_paths={"turnaround": ["/assets/linchen.png"]}),
+        ],
+        visual_assets=[
+            VisualAsset(category="scene", name="青云宗", image_paths=["/assets/qingyun.png"]),
+        ],
+        shots=[
+            Shot(shot_id=1, scene_description="林辰被踩", characters=["林辰"], duration=4),
+            Shot(shot_id=2, scene_description="周玄逼吞废丹", characters=["林辰"], duration=6),
+            Shot(shot_id=3, scene_description="废丹入喉", characters=["林辰"], duration=6),
+        ],
+    )
+
+    payloads = prepare_video_segment_window_payloads(
+        project,
+        episode=1,
+        window_seconds=6,
+        start_sec=0,
+        end_sec=18,
+    )
+
+    assert [(item["start_sec"], item["end_sec"]) for item in payloads] == [
+        (0, 6),
+        (6, 12),
+        (12, 18),
+    ]
+    assert [item["window_index"] for item in payloads] == [1, 2, 3]
+    assert all(item["window_seconds"] == 6 for item in payloads)
+    assert [shot["shot_id"] for shot in payloads[0]["shots"]] == [1, 2]
+    assert [shot["shot_id"] for shot in payloads[2]["shots"]] == [3]
+    assert "林辰被踩" in payloads[0]["script_excerpt"]
+    assert "周玄逼吞废丹" in payloads[2]["script_excerpt"]

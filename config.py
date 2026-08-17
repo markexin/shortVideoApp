@@ -33,6 +33,15 @@ WORKFLOW_ENDPOINT = os.getenv("WORKFLOW_ENDPOINT", "")
 COMFYUI_BASE_URL = os.getenv("COMFYUI_BASE_URL", "http://127.0.0.1:8188")
 COMFYUI_WORKFLOW_PATH = os.getenv("COMFYUI_WORKFLOW_PATH", "")
 
+# MiniMax video_generation: subject-reference/image-to-video/text-to-video.
+MINIMAX_VIDEO_API_KEY = os.getenv("MINIMAX_API_KEY") or os.getenv("MINIMAX_GROUP_API_KEY") or ""
+MINIMAX_VIDEO_BASE_URL = os.getenv("MINIMAX_VIDEO_BASE_URL", "https://api.minimaxi.com")
+MINIMAX_VIDEO_MODE = os.getenv("MINIMAX_VIDEO_MODE", "h3_reference")
+MINIMAX_VIDEO_MODEL = os.getenv("MINIMAX_VIDEO_MODEL", "MiniMax-H3")
+MINIMAX_VIDEO_DURATION = int(os.getenv("MINIMAX_VIDEO_DURATION", "6"))
+MINIMAX_VIDEO_RESOLUTION = os.getenv("MINIMAX_VIDEO_RESOLUTION", "1080P")
+MINIMAX_VIDEO_TIMEOUT = int(os.getenv("MINIMAX_VIDEO_TIMEOUT", "3600"))
+
 # ─── 默认生成参数 ───
 DEFAULT_RESOLUTION = "1080p"
 DEFAULT_RATIO = "16:9"
@@ -70,5 +79,6 @@ MUSIC_LIBRARY = {
 # ─── 并发/调度 ───
 MAX_CONCURRENT_GENERATIONS = 3
 GENERATION_TIMEOUT = 600       # 单个镜头最长等待 10 分钟 (I2V 比 T2V 慢, 需更多时间)
+MSR_GENERATION_TIMEOUT = int(os.getenv("MSR_GENERATION_TIMEOUT", "3600"))  # MSR 视频片段约 40-50 分钟
 MAX_RETRIES_PER_SHOT = 3
 DOWNLOAD_IMMEDIATELY = True    # 生成后立即下载 (URL 24h 过期)

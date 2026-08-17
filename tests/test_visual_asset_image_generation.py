@@ -83,12 +83,14 @@ def test_visual_asset_generator_generates_each_character_variant(tmp_path):
         variants=[
             {
                 "name": "初期杂役",
+                "story_stage": "第1-6集：觉醒前与刚觉醒的杂役阶段",
                 "turnaround_prompt": "gray servant robe turnaround",
                 "consistency_prompt": "same face, gray robe",
                 "negative_prompt": "no black robe",
             },
             {
                 "name": "觉醒药师",
+                "story_stage": "第7-28集：炼丹大会成名至决战前",
                 "turnaround_prompt": "black pharmacist robe turnaround",
                 "consistency_prompt": "same face, black robe",
                 "negative_prompt": "no gray robe",
@@ -108,8 +110,8 @@ def test_visual_asset_generator_generates_each_character_variant(tmp_path):
     assert len(results) == 2
     assert "gray servant robe turnaround" in adapter.calls[0].prompt
     assert "black pharmacist robe turnaround" in adapter.calls[1].prompt
-    assert adapter.calls[0].output_path.endswith("characters/001_林辰/01_初期杂役/turnaround.png")
-    assert adapter.calls[1].output_path.endswith("characters/001_林辰/02_觉醒药师/turnaround.png")
+    assert adapter.calls[0].output_path.endswith("characters/001_林辰/01_初期杂役_第1-6集/turnaround.png")
+    assert adapter.calls[1].output_path.endswith("characters/001_林辰/02_觉醒药师_第7-28集/turnaround.png")
     assert character.variants[0]["image_paths"]["turnaround"][0].endswith("turnaround.png")
 
 

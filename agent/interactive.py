@@ -25,6 +25,8 @@ from pipeline.video_segment_preparer import find_latest_video_segment_payload, p
 from pipeline.visual_style import character_identity_lock, with_reference_negative, with_reference_style
 from projects.manager import ProjectManager
 from projects.schema import Character, Project, Shot, now_iso
+from workflows.comfyui import ComfyUIWorkflowAdapter, build_msr_segment_inputs
+from workflows.minimax_video import MiniMaxVideoAdapter, build_minimax_video_request
 
 
 console = Console()
@@ -108,6 +110,8 @@ class ShortDramaAgent:
             "export_image_prompts": self._handle_export_image_prompts,
             "prepare_video_segment": self._handle_prepare_video_segment,
             "show_video_segment_payload": self._handle_show_video_segment_payload,
+            "generate_video_segment": self._handle_generate_video_segment,
+            "generate_minimax_video_segment": self._handle_generate_minimax_video_segment,
             "show_image_tasks": self._handle_show_image_tasks,
             "import_image_dir": self._handle_import_image_dir,
             "assemble_episode": self._handle_assemble_episode,
@@ -992,6 +996,136 @@ class ShortDramaAgent:
             return
 
         self._print_video_segment_payload_summary(payload_path, payload)
+        self._print_project_menu()
+
+    def _handle_generate_video_segment(self, command: Command) -> None:
+        project = self._require_project()
+        if not project:
+            return
+        if not self._require_step({"storyboard_ready", "image_prompts_exported", "videos_ready", "episode_ready"}):
+            return
+        project_dir = self.manager.project_dir(project.project_id)
+        payload_path = find_latest_video_segment_payload(project_dir)
+        if payload_path is None:
+            try:
+                payload = prepare_next_video_segment_payload(project, project_dir=project_dir)
+            except ValueError as exc:
+                console.print(f"[yellow]{exc}[/yellow]")
+                self._print_project_menu()
+                return
+            payload_path = self._video_segment_payload_path(project, payload)
+            payload_path.parent.mkdir(parents=True, exist_ok=True)
+            payload_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        try:
+            payload = json.loads(payload_path.read_text(encoding="utf-8"))
+            inputs = build_msr_segment_inputs(payload)
+        except Exception as exc:
+            console.print(f"[red]MSR 视频入参不可用:[/red] {exc}")
+            self._print_project_menu()
+            return
+
+        workflow_path = config.PROJECT_ROOT / "examples" / "MSR_多图参考工作流.json"
+        output_path = (
+            project_dir
+            / "videos"
+            / f"{payload_path.stem.replace('_payload', '')}_msr.mp4"
+        )
+        console.print(f"[cyan]MSR workflow:[/cyan] {workflow_path}")
+        console.print(f"[cyan]主体角色图:[/cyan] {inputs.subject_image_path}")
+        console.print(f"[cyan]背景图:[/cyan] {inputs.background_image_path}")
+        console.print(f"[cyan]道具图数量:[/cyan] {len(inputs.prop_image_paths)}")
+        console.print(f"[cyan]提交 ComfyUI:[/cyan] {config.COMFYUI_BASE_URL}")
+        console.print(f"[cyan]等待超时:[/cyan] {config.MSR_GENERATION_TIMEOUT // 60} 分钟")
+
+        adapter = ComfyUIWorkflowAdapter(
+            base_url=config.COMFYUI_BASE_URL,
+            workflow_path=workflow_path,
+            timeout=config.MSR_GENERATION_TIMEOUT,
+        )
+        result = asyncio.run(adapter.generate_msr_segment(payload, str(output_path)))
+        if result.status != "success":
+            console.print(f"[red]MSR 视频生成失败:[/red] {result.error}")
+            self._print_project_menu()
+            return
+
+        console.print(f"[green]MSR 视频已生成:[/green] {result.local_path}")
+        console.print(f"prompt_id: {result.metadata.get('prompt_id')}")
+        self._print_project_menu()
+
+    def _handle_generate_minimax_video_segment(self, command: Command) -> None:
+        project = self._require_project()
+        if not project:
+            return
+        if not self._require_step({"storyboard_ready", "image_prompts_exported", "videos_ready", "episode_ready"}):
+            return
+        project_dir = self.manager.project_dir(project.project_id)
+        payload_path = find_latest_video_segment_payload(project_dir)
+        if payload_path is None:
+            try:
+                payload = prepare_next_video_segment_payload(project, project_dir=project_dir)
+            except ValueError as exc:
+                console.print(f"[yellow]{exc}[/yellow]")
+                self._print_project_menu()
+                return
+            payload_path = self._video_segment_payload_path(project, payload)
+            payload_path.parent.mkdir(parents=True, exist_ok=True)
+            payload_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        try:
+            payload = json.loads(payload_path.read_text(encoding="utf-8"))
+            request_body = build_minimax_video_request(
+                payload,
+                mode=config.MINIMAX_VIDEO_MODE,
+                model=config.MINIMAX_VIDEO_MODEL,
+                duration=config.MINIMAX_VIDEO_DURATION,
+                resolution=config.MINIMAX_VIDEO_RESOLUTION,
+            )
+        except Exception as exc:
+            console.print(f"[red]MiniMax 视频入参不可用:[/red] {exc}")
+            self._print_project_menu()
+            return
+        request_path = payload_path.with_name(payload_path.stem.replace("_payload", "_minimax_request") + ".json")
+        request_path.write_text(json.dumps(request_body, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+        metadata = request_body.get("_metadata", {})
+        output_path = (
+            project_dir
+            / "videos"
+            / f"{payload_path.stem.replace('_payload', '')}_minimax.mp4"
+        )
+        console.print(f"[cyan]MiniMax request:[/cyan] {request_path}")
+        console.print(f"[cyan]模式/模型:[/cyan] {config.MINIMAX_VIDEO_MODE} / {config.MINIMAX_VIDEO_MODEL}")
+        console.print(f"[cyan]参考图:[/cyan] 角色 {metadata.get('character_image_count')} 张，场景 1 张，道具 {metadata.get('prop_image_count')} 张写入提示词")
+        if not config.MINIMAX_VIDEO_API_KEY:
+            console.print("[red]缺少 MINIMAX_API_KEY，请先在 .env 或环境变量中配置。[/red]")
+            self._print_project_menu()
+            return
+
+        adapter = MiniMaxVideoAdapter(
+            api_key=config.MINIMAX_VIDEO_API_KEY,
+            base_url=config.MINIMAX_VIDEO_BASE_URL,
+            timeout=config.MINIMAX_VIDEO_TIMEOUT,
+        )
+        result = adapter.generate_segment(
+            payload,
+            output_path=output_path,
+            mode=config.MINIMAX_VIDEO_MODE,
+            model=config.MINIMAX_VIDEO_MODEL,
+            duration=config.MINIMAX_VIDEO_DURATION,
+            resolution=config.MINIMAX_VIDEO_RESOLUTION,
+        )
+        if result.status != "success":
+            console.print(f"[red]MiniMax 视频生成失败:[/red] {result.error}")
+            self._print_project_menu()
+            return
+
+        console.print(f"[green]MiniMax 视频已生成:[/green] {result.local_path}")
+        console.print(f"task_id: {result.metadata.get('task_id')}")
         self._print_project_menu()
 
     @staticmethod
