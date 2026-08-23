@@ -46,6 +46,10 @@ def main() -> int:
         inputs,
         subject_image_name=Path(inputs.subject_image_path).name,
         background_image_name=Path(inputs.background_image_path).name,
+        extra_reference_image_names=[
+            Path(path).name
+            for path in inputs.extra_reference_image_paths
+        ],
     )
     prompt_out.write_text(json.dumps(prepared_prompt, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
@@ -53,6 +57,9 @@ def main() -> int:
     print(f"background_image={inputs.background_image_path}")
     print(f"reference_characters={len(inputs.reference_character_images)}")
     print(f"props={len(inputs.prop_image_paths)}")
+    print(f"extra_references={len(inputs.extra_reference_image_paths)}")
+    for index, path in enumerate(inputs.extra_reference_image_paths, start=1):
+        print(f"extra_reference_{index}={path}")
     print(f"prompt={prompt_out}")
 
     if args.dry_run:

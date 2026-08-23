@@ -1,0 +1,3 @@
+# 前端 Web 管理平台后端依赖
+fastapi>=0.110
+uvicorn[standard]>=0.29

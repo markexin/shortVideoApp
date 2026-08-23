@@ -29,10 +29,12 @@ DEFAULT_MSR_NEGATIVE_PROMPT = (
     "bad anatomy, extra limbs, deformed hands, duplicated face, face drift, outfit drift, "
     "background drift, wrong character, wrong scene, messy composition, overexposed, "
     "underexposed, plastic skin, flicker, smiling protagonist, happy face, neutral expression, "
-    "calm face, wrong emotion, comedy expression, watermark, subtitles, text, logo, UI overlay"
+    "calm face, wrong emotion, comedy expression, impossible body twist, broken spine, floating foot, "
+    "foot through body, reversed limbs, melted bodies, wrong contact point, teleporting camera, "
+    "random cuts, watermark, subtitles, text, logo, UI overlay"
 )
-MAX_MSR_PROMPT_WORDS = 300
 MAX_MSR_NEGATIVE_WORDS = 120
+MAX_MSR_NUMBERED_REFERENCE_IMAGES = 4
 
 
 @dataclass(frozen=True)
@@ -46,6 +48,7 @@ class MSRSegmentInputs:
     output_prefix: str
     reference_character_images: list[str] = field(default_factory=list)
     prop_image_paths: list[str] = field(default_factory=list)
+    extra_reference_image_paths: list[str] = field(default_factory=list)
 
 
 def apply_workflow_placeholders(
@@ -109,17 +112,24 @@ def build_msr_segment_inputs(
         duration = sum(float(shot.get("duration", 0)) for shot in payload.get("shots", []))
     if duration <= 0:
         duration = 5.0
+    extra_reference_images = _extra_msr_reference_images(
+        character_images,
+        background_image,
+        prop_images,
+        subject_image,
+    )
 
     return MSRSegmentInputs(
         subject_image_path=subject_image,
         background_image_path=background_image,
-        prompt=_build_msr_prompt(payload, subject_image, background_image, prop_images),
+        prompt=_build_msr_prompt(payload, subject_image, background_image, extra_reference_images),
         negative_prompt=_build_msr_negative_prompt(payload),
         duration=duration,
         fps=fps,
         output_prefix=output_prefix or _default_msr_output_prefix(payload),
         reference_character_images=character_images,
         prop_image_paths=prop_images,
+        extra_reference_image_paths=extra_reference_images,
     )
 
 
@@ -128,12 +138,18 @@ def apply_msr_workflow_inputs(
     inputs: MSRSegmentInputs,
     subject_image_name: str,
     background_image_name: str,
+    extra_reference_image_names: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Mutate a ComfyUI API workflow for the checked-in MSR two-image workflow."""
+    """Mutate a ComfyUI API workflow for the checked-in MSR multi-image workflow."""
     prompt = copy.deepcopy(workflow)
     _normalize_comfyui_path_separators(prompt)
     _set_node_input(prompt, "29", "image", subject_image_name)
     _set_node_input(prompt, "30", "image", background_image_name)
+    _set_msr_extra_reference_images(
+        prompt,
+        extra_reference_image_names or [],
+        reserved_image_names={subject_image_name, background_image_name},
+    )
     _set_node_input(prompt, "5", "text", inputs.prompt)
     _set_node_input(prompt, "6", "text", inputs.negative_prompt)
     _set_node_input(prompt, "20", "filename_prefix", inputs.output_prefix)
@@ -142,6 +158,67 @@ def apply_msr_workflow_inputs(
     _set_node_input(prompt, "22", "frame_rate", inputs.fps)
     _set_node_input(prompt, "7", "frame_rate", inputs.fps)
     return prompt
+
+
+def _extra_msr_reference_images(
+    character_images: list[str],
+    background_image: str,
+    prop_images: list[str],
+    subject_image: str,
+) -> list[str]:
+    paths: list[str] = []
+    paths.extend(character_images)
+    paths.extend(prop_images)
+    seen: set[str] = {subject_image, background_image}
+    unique: list[str] = []
+    max_extra = max(0, MAX_MSR_NUMBERED_REFERENCE_IMAGES - 1)
+    for path in paths:
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        unique.append(path)
+        if len(unique) >= max_extra:
+            break
+    return unique
+
+
+def _set_msr_extra_reference_images(
+    workflow: dict[str, Any],
+    image_names: list[str],
+    reserved_image_names: set[str],
+) -> None:
+    used_names = set(reserved_image_names)
+    reference_names: list[str] = []
+    for image_name in image_names:
+        if not image_name or image_name in used_names:
+            continue
+        used_names.add(image_name)
+        reference_names.append(image_name)
+        if len(reference_names) >= max(0, MAX_MSR_NUMBERED_REFERENCE_IMAGES - 1):
+            break
+
+    if not reference_names:
+        return
+    if "28" not in workflow or "inputs" not in workflow["28"]:
+        raise ValueError("MSR 工作流缺少节点 28.inputs")
+
+    msr_inputs = workflow["28"]["inputs"]
+    for key in list(msr_inputs):
+        if key.isdigit() and int(key) > 1:
+            del msr_inputs[key]
+
+    node_id = 31
+    for index, image_name in enumerate(reference_names, start=2):
+        while str(node_id) in workflow:
+            node_id += 1
+        node_key = str(node_id)
+        workflow[node_key] = {
+            "inputs": {"image": image_name},
+            "class_type": "LoadImage",
+            "_meta": {"title": f"参考图 {index}"},
+        }
+        msr_inputs[str(index)] = [node_key, 0]
+        node_id += 1
 
 
 def _normalize_comfyui_path_separators(value: Any) -> Any:
@@ -258,17 +335,20 @@ def _build_msr_prompt(
     payload: dict[str, Any],
     subject_image: str,
     background_image: str,
-    prop_images: list[str],
+    extra_reference_images: list[str],
 ) -> str:
     shots = payload.get("shots", [])
-    prop_names = [_asset_label(path) for path in prop_images]
-    shot_plan = _build_compact_shot_plan(shots)
+    prop_names = [_asset_label(path) for path in _prop_reference_images(extra_reference_images)]
+    shot_plan = _build_compact_shot_plan(
+        shots,
+        window_start=_optional_float(payload.get("start_sec")),
+        window_end=_optional_float(payload.get("end_sec")),
+    )
     selected_characters = "、".join(payload.get("selected_characters", [])[:5])
     prompt_parts = [
         f"Goal: vertical 9:16 cinematic short-drama video, episode {payload.get('episode')}, "
         f"{payload.get('start_sec')}-{payload.get('end_sec')}s, tense xianxia humiliation scene.",
-        f"Subject reference: keep exact identity, face, age, hairstyle, grey servant costume and body proportions from {_asset_label(subject_image)}.",
-        f"Background reference: keep architecture, stone steps, depth, lighting and spatial layout from {_asset_label(background_image)}.",
+        _build_msr_reference_mapping(subject_image, background_image, extra_reference_images),
     ]
     if selected_characters:
         prompt_parts.append(f"Characters on screen: {selected_characters}; main focus is the subject reference character.")
@@ -282,14 +362,35 @@ def _build_msr_prompt(
         prompt_parts.append(f"Shot plan: {shot_plan}")
     prompt_parts.extend(
         [
-            "Camera: start with extreme close-up detail, slow zoom or push-in, slight handheld pressure, then controlled reveal; no random cuts.",
-            "View and composition: low angle and over-shoulder tension, clear foreground subject, readable background, strong depth, stable framing.",
+            "Physical continuity: one continuous grounded action; Lin Chen stays kneeling or braced on the stone steps, Zhou Xuan stands above him, one boot presses the side of Lin Chen's shoulder or the step beside it; no impossible body twist, no foot through torso, no floating limbs.",
+            "Single-camera plan: keep one stable low-angle medium close shot, slow controlled push-in only, no sudden tilt up and down, no random cuts, no teleporting viewpoint.",
+            "Composition: Zhou Xuan higher in frame and dominant, Lin Chen lower in frame and oppressed, both bodies readable, clear contact point, natural weight and balance.",
             "Environment: cold sect courtyard atmosphere, stone texture, faint mist, disciplined xianxia costumes, no modern objects.",
             "Lighting: cinematic contrast, cool daylight, soft rim light, visible facial emotion, natural shadows, not overexposed.",
-            "Continuity: preserve face, costume, body scale, background geometry and emotional tone across all frames; smooth motion, no flicker.",
+            "Continuity: preserve face, costume, body scale, background geometry, contact position and emotional tone across all frames; smooth motion, no flicker.",
         ]
     )
-    return _limit_words("\n".join(part for part in prompt_parts if part), MAX_MSR_PROMPT_WORDS)
+    return "\n".join(part for part in prompt_parts if part)
+
+
+def _build_msr_reference_mapping(
+    subject_image: str,
+    background_image: str,
+    extra_reference_images: list[str],
+) -> str:
+    lines = [
+        f"Reference mapping: Image 1 is {_asset_label(subject_image)}, the protagonist; preserve exact face, hairstyle, age, grey servant robe and body scale.",
+    ]
+    for index, path in enumerate(extra_reference_images, start=2):
+        lines.append(f"Image {index} is {_asset_label(path)}; preserve only this referenced identity or prop when it appears.")
+    lines.append(
+        f"Background image is {_asset_label(background_image)}; preserve architecture, stone steps, depth, lighting and spatial layout."
+    )
+    return " ".join(lines)
+
+
+def _prop_reference_images(extra_reference_images: list[str]) -> list[str]:
+    return [path for path in extra_reference_images if "/props/" in Path(path).as_posix()]
 
 
 def _build_msr_negative_prompt(payload: dict[str, Any]) -> str:
@@ -319,32 +420,79 @@ def _limit_negative_terms(terms: list[str], max_words: int) -> str:
     return ", ".join(selected)
 
 
-def _build_compact_shot_plan(shots: list[dict[str, Any]]) -> str:
+def _build_compact_shot_plan(
+    shots: list[dict[str, Any]],
+    window_start: float | None = None,
+    window_end: float | None = None,
+) -> str:
     lines = []
-    for shot in shots[:6]:
-        prompt = shot.get("video_prompt") or shot.get("image_prompt") or ""
+    for shot in _shots_for_window(shots, window_start, window_end)[:6]:
         parts = [
-            f"{shot.get('start_sec')}-{shot.get('end_sec')}s",
-            _clean_inline(str(shot.get("scene_description", "")), 48),
-            _clean_inline(str(shot.get("action", "")), 38),
-            _clean_inline(str(prompt), 70),
+            f"{_format_time(shot.get('start_sec'))}-{_format_time(shot.get('end_sec'))}s",
+            _clean_inline(_remove_camera_directions(str(shot.get("scene_description", "")))),
+            _clean_inline(str(shot.get("action", ""))),
+            _clean_inline(str(shot.get("dialogue", ""))),
         ]
         lines.append(" | ".join(part for part in parts if part))
     return "; ".join(lines)
 
 
-def _clean_inline(text: str, max_chars: int) -> str:
-    value = re.sub(r"\s+", " ", text).strip(" ;,，。")
-    if len(value) <= max_chars:
-        return value
-    return value[:max_chars].rstrip(" ;,，。") + "..."
+def _remove_camera_directions(text: str) -> str:
+    patterns = [
+        r"镜头[^，。；;]*[，。；;]?",
+        r"camera[^.;。；]*[.;。；]?",
+        r"slow push[^.;。；]*[.;。；]?",
+        r"slow zoom[^.;。；]*[.;。；]?",
+    ]
+    value = text
+    for pattern in patterns:
+        value = re.sub(pattern, "", value, flags=re.IGNORECASE)
+    return value
 
 
-def _limit_words(text: str, max_words: int) -> str:
-    words = text.split()
-    if len(words) <= max_words:
-        return text
-    return " ".join(words[:max_words]).rstrip(" ,.;；，。") + "."
+def _shots_for_window(
+    shots: list[dict[str, Any]],
+    window_start: float | None,
+    window_end: float | None,
+) -> list[dict[str, Any]]:
+    if window_start is None or window_end is None or window_end <= window_start:
+        return shots
+
+    selected: list[dict[str, Any]] = []
+    for shot in shots:
+        shot_start = _optional_float(shot.get("start_sec"))
+        shot_end = _optional_float(shot.get("end_sec"))
+        if shot_start is None or shot_end is None:
+            selected.append(shot)
+            continue
+        clipped_start = max(shot_start, window_start)
+        clipped_end = min(shot_end, window_end)
+        if clipped_start >= clipped_end:
+            continue
+        clipped = dict(shot)
+        clipped["start_sec"] = clipped_start
+        clipped["end_sec"] = clipped_end
+        clipped["duration"] = clipped_end - clipped_start
+        selected.append(clipped)
+    return selected
+
+
+def _optional_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _format_time(value: Any) -> str:
+    numeric = _optional_float(value)
+    if numeric is None:
+        return str(value)
+    return str(int(numeric)) if numeric.is_integer() else f"{numeric:g}"
+
+
+def _clean_inline(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _default_msr_output_prefix(payload: dict[str, Any]) -> str:
@@ -423,11 +571,16 @@ class ComfyUIWorkflowAdapter:
             inputs = build_msr_segment_inputs(payload, fps=fps)
             subject_name = self._upload_image(inputs.subject_image_path)
             background_name = self._upload_image(inputs.background_image_path)
+            extra_reference_names = [
+                self._upload_image(path)
+                for path in inputs.extra_reference_image_paths
+            ]
             prompt = apply_msr_workflow_inputs(
                 workflow,
                 inputs,
                 subject_image_name=subject_name,
                 background_image_name=background_name,
+                extra_reference_image_names=extra_reference_names,
             )
             prompt_id = self._queue_prompt(prompt)
             history_entry = self._wait_for_history(prompt_id)
@@ -444,6 +597,8 @@ class ComfyUIWorkflowAdapter:
                     "background_image": inputs.background_image_path,
                     "reference_character_images": inputs.reference_character_images,
                     "prop_image_paths": inputs.prop_image_paths,
+                    "extra_reference_image_paths": inputs.extra_reference_image_paths,
+                    "extra_reference_image_count": len(inputs.extra_reference_image_paths),
                     "output_prefix": inputs.output_prefix,
                 },
             )

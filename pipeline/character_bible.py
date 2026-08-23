@@ -152,6 +152,134 @@ def parse_characters_response(text: str) -> list[Character]:
     return parse_visual_bible_response(text).characters
 
 
+def _existing_character_prompts(existing: list[Character]) -> str:
+    """把其它角色的锚点拼成提示块，约束被重生成角色与其它角色的视觉一致性。"""
+    lines = []
+    for c in existing:
+        lines.append(
+            f"- {c.name}: {c.description}; 一致性: {c.consistency_prompt}; 负面: {c.negative_prompt}"
+        )
+    return "\n".join(lines)
+
+
+def regenerate_single_character(
+    script: str,
+    existing: list[Character],
+    target_name: str,
+    aspect_ratio: str = "9:16",
+) -> list[Character]:
+    """重新生成单个角色：其余角色从 existing 原样回填，保持角色顺序不变。
+
+    - 若现有圣经已无该角色（被删除），则回退为整本重新生成。
+    - 若 LLM 一次返回了多个角色，按 name 取匹配目标角色的那一条。
+    """
+    target = next((c for c in existing if c.name == target_name), None)
+    if target is None:
+        return generate_visual_bible(script, aspect_ratio=aspect_ratio).characters
+
+    others = [c for c in existing if c.name != target_name]
+    other_block = _existing_character_prompts(others)
+
+    client = create_llm_client()
+    response = client.chat.completions.create(
+        model=config.LLM_MODEL,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": _build_single_character_prompt(
+                script, aspect_ratio=aspect_ratio, target=target, others_block=other_block,
+            )},
+        ],
+        temperature=0.4,
+    )
+    bibles = parse_visual_bible_response(response.choices[0].message.content or "").characters
+
+    rebuilt: list[Character] = []
+    new_target: Character | None = None
+    seen_names: set[str] = set()
+    for c in bibles:
+        if c.name == target_name:
+            rebuilt.append(_clamp_character_prompts(c))
+            new_target = c
+            seen_names.add(c.name)
+        else:
+            # 非目标角色一律回填旧值，保证「只刷新该条」
+            rebuilt.append(c)
+            seen_names.add(c.name)
+
+    if new_target is None:
+        # 目标角色未在 LLM 输出中找到：不破坏现有结果，抛错交由任务层处理
+        raise ValueError(f"LLM 未返回目标角色「{target_name}」的设定")
+
+    for c in existing:
+        if c.name not in seen_names and c.name != target_name:
+            rebuilt.append(c)
+    return rebuilt
+
+
+def _build_single_character_prompt(
+    script: str,
+    aspect_ratio: str,
+    target: "Character",
+    others_block: str,
+) -> str:
+    """构建单角色重生成 prompt：只要求输出目标角色，并继承现有设定其余字段。"""
+    return f"""请仅重新生成短剧中的单个角色「{target.name}」，其余角色保持不变。
+
+项目画幅: {aspect_ratio}
+
+该角色当前设定（作为参考，请按需要改进）:
+- 外观锚点: {target.description}
+- 一致性: {target.consistency_prompt}
+- 负面约束: {target.negative_prompt}
+- 造型变体: {len(target.variants)} 个
+
+本剧本其它角色的视觉锚点（必须与其它角色保持协调）:
+{others_block}
+
+剧本:
+{script}
+
+输出严格 JSON（只输出该一个角色，不要其它角色）:
+{{
+  "characters": [
+    {{
+      "name": "{target.name}",
+      "description": "中文外观锚点，包含年龄段、性别、脸型、发型、服装、气质、标志物",
+      "style_prompt": "中文风格确认，与整体题材一致，200-300 字",
+      "turnaround_prompt": "中文人物三视图设定板 prompt（含正面/侧面/背面全身 + 面部特写 + 中文姓名标注）",
+      "front_view_prompt": "中文正面全身角色参考图 prompt",
+      "side_view_prompt": "中文侧面全身角色参考图 prompt",
+      "back_view_prompt": "中文背面全身角色参考图 prompt",
+      "consistency_prompt": "English consistency prompt, stable face, hair, outfit, age, temperament",
+      "negative_prompt": "English negative prompt, forbid face/outfit/hair drift",
+      "variants": [
+        {{
+          "name": "阶段/造型名",
+          "story_stage": "出现范围",
+          "description": "中文阶段造型描述，保持同一张脸只改变允许变化的部分",
+          "turnaround_prompt": "该造型三视图设定板 prompt",
+          "front_view_prompt": "该造型正面参考图 prompt",
+          "side_view_prompt": "该造型侧面参考图 prompt",
+          "back_view_prompt": "该造型背面参考图 prompt",
+          "consistency_prompt": "English consistency prompt for this variant",
+          "negative_prompt": "English negative prompt"
+        }}
+      ]
+    }}
+  ]
+}}
+
+要求:
+- 只输出该一个角色，不要输出其它角色
+- 其余角色必须保持与现有角色圣经一致，不得重写
+- 保持同一年年龄段、同一核心脸/发型；仅改进该角色不合理之处
+- 每个 prompt 字段控制在 200-300 字，不得超过 300 字
+- 中文标注名字中「{target.name}」必须替换成真实角色名
+- 三视图只能改变视角，不能改变人设
+- 不要输出 JSON 之外的解释
+"""
+
+
 def parse_visual_bible_response(text: str) -> VisualBible:
     data = _parse_json_response(text)
     return VisualBible(

@@ -18,12 +18,17 @@ def build_storyboard_prompt(
     script: str,
     characters: list[Character],
     aspect_ratio: str = "9:16",
+    shot_id: int | None = None,
 ) -> str:
     character_block = "\n".join(
         f"- {char.name}: {char.description}; {char.consistency_prompt}; negative: {char.negative_prompt}"
         for char in characters
     )
-    return f"""请将下面短剧脚本拆成分镜。
+    only_hint = (
+        f"请仅输出 shot_id={shot_id} 这一个镜头，其余镜头保持原样。"
+        if shot_id is not None else "请输出完整分镜（每集对应的所有镜头）。"
+    )
+    return f"""{only_hint}
 
 画面比例: {aspect_ratio}
 
@@ -39,11 +44,11 @@ def build_storyboard_prompt(
 脚本:
 {script}
 
-输出严格 JSON:
+输出严格 JSON（shots 数组只包含目标镜头，不要其它镜头）:
 {{
   "shots": [
     {{
-      "shot_id": 1,
+      "shot_id": {shot_id if shot_id is not None else 1},
       "scene_description": "中文场景地点",
       "action": "中文动作描述",
       "characters": ["角色名"],
@@ -73,7 +78,13 @@ def generate_drama_storyboard(
     script: str,
     characters: list[Character],
     aspect_ratio: str = "9:16",
+    shot_id: int | None = None,
 ) -> list[Shot]:
+    """生成分镜。
+
+    默认输出全部分镜；当提供 shot_id 时，要求 LLM 仅输出该条分镜，
+    其余分镜交由调用方从既有分镜回填，以保证「只刷新该条」。
+    """
     client = create_llm_client()
     response = client.chat.completions.create(
         model=config.LLM_MODEL,
@@ -85,17 +96,35 @@ def generate_drama_storyboard(
                     script=script,
                     characters=characters,
                     aspect_ratio=aspect_ratio,
+                    shot_id=shot_id,
                 ),
             },
         ],
         temperature=0.5,
     )
-    return parse_storyboard_response(response.choices[0].message.content or "")
+    return parse_storyboard_response(response.choices[0].message.content or "", shot_id=shot_id)
 
 
-def parse_storyboard_response(text: str) -> list[Shot]:
+def parse_storyboard_response(text: str, shot_id: int | None = None) -> list[Shot]:
     data = _parse_json_response(text)
-    return [Shot.from_dict(item) for item in data.get("shots", [])]
+    shots = [Shot.from_dict(item) for item in data.get("shots", [])]
+    # 单条重生成时，解析出的镜头未必就是目标 shot_id，做兜底合并
+    if shot_id is not None:
+        return _resolve_single_shot(shots, shot_id)
+    return shots
+
+
+def _resolve_single_shot(
+    generated: list[Shot], shot_id: int
+) -> list[Shot]:
+    """单条重生成回填：LLM 只被要求输出目标 shot_id。
+
+    - 生成结果里找到了目标 shot_id：原样返回（调用方再据此替换旧分镜）。
+    - 没找到：抛错交由任务层处理，既有分镜不更新。
+    """
+    if any(s.shot_id == shot_id for s in generated):
+        return generated
+    raise ValueError(f"生成结果未包含目标 shot_id={shot_id}，分镜未更新")
 
 
 def _parse_json_response(text: str) -> dict:

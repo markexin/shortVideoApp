@@ -63,6 +63,75 @@ def prepare_video_segment_payload(
     }
 
 
+def prepare_single_shot_payload(
+    project: Project,
+    shot: Shot,
+    episode: int | None = None,
+    project_dir: str | Path | None = None,
+) -> dict[str, Any]:
+    """Prepare a provider-neutral payload for a single shot.
+
+    Reuses the window-overlapping logic with the shot's own duration as the
+    time range, so any single shot can be turned into a MiniMax/MSR request
+    without touching the episode-wide flow.
+    """
+    if project_dir is None and shot.image_path:
+        # 需要解析 shot.image_path 等相对路径，尽量使用项目目录。
+        for candidate in (
+            Path.cwd() / project.project_id,
+            Path.cwd() / "projects_data" / project.project_id,
+        ):
+            if candidate.exists():
+                project_dir = candidate
+                break
+
+    start_sec = 0.0
+    duration = float(shot.duration) if float(shot.duration) > 0 else 5.0
+    end_sec = start_sec + duration
+
+    if episode is None:
+        episode = _episode_for_shot(project, shot)
+
+    payload = prepare_video_segment_payload(
+        project,
+        episode=episode,
+        start_sec=start_sec,
+        end_sec=end_sec,
+        project_dir=project_dir,
+    )
+
+    # 只保留目标分镜对应的条目，其余丢弃。
+    payload["shots"] = [
+        s for s in payload["shots"] if s.get("shot_id") == shot.shot_id
+    ]
+    payload["shot_id"] = shot.shot_id
+    return payload
+
+
+def _episode_for_shot(project: Project, shot: Shot) -> int:
+    """Infer the episode a shot belongs to.
+
+    The shot's position among all shots maps to a time offset; the episode
+    whose script time block contains that offset wins. Falls back to the
+    first script block's episode.
+    """
+    blocks = _script_time_blocks(project)
+    if not blocks:
+        return 1
+
+    offset = 0.0
+    for candidate in project.shots:
+        if candidate.shot_id == shot.shot_id:
+            break
+        offset += float(candidate.duration)
+
+    for episode, block_start, block_end in blocks:
+        if block_start <= offset < block_end:
+            return episode
+
+    return blocks[0][0]
+
+
 def prepare_next_video_segment_payload(
     project: Project,
     project_dir: str | Path | None = None,

@@ -47,6 +47,43 @@ class ProjectManager:
         self.save_project(project)
         return project
 
+    def update_project(
+        self,
+        project_id: str,
+        title: str,
+        premise: str = "",
+        genre: str = "",
+        platform: str = "",
+        aspect_ratio: str = "9:16",
+        episode_count: int = 6,
+        seconds_per_episode: int = 60,
+        audience: str = "3-8岁儿童",
+        pacing_style: str = "寓教于乐",
+        reset_pipeline: bool = False,
+    ) -> Project:
+        project = self.load_project(project_id)
+        project.title = title
+        project.premise = premise
+        project.genre = genre
+        project.platform = platform
+        project.aspect_ratio = aspect_ratio
+        project.episode_count = episode_count
+        project.seconds_per_episode = seconds_per_episode
+        project.audience = audience
+        project.pacing_style = pacing_style
+
+        if reset_pipeline:
+            project.script = ""
+            project.script_units = []
+            project.script_generation = {}
+            project.characters = []
+            project.visual_assets = []
+            project.shots = []
+            project.current_step = "script_confirm"
+
+        self.save_project(project)
+        return project
+
     def save_project(self, project: Project) -> None:
         project_dir = self.project_dir(project.project_id)
         project_dir.mkdir(parents=True, exist_ok=True)
