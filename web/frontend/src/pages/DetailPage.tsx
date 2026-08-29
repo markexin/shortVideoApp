@@ -62,11 +62,11 @@ export function DetailPage() {
   }, [task?.status, load])
 
   const activate = useCallback(
-    async (op: string) => {
+    async (op: string, query?: Record<string, string | number | undefined>) => {
       if (!projectId) return
       setTriggerBusy((b) => ({ ...b, [op]: true }))
       try {
-        const rec: TaskRecord = await triggerOp(projectId, op)
+        const rec: TaskRecord = await triggerOp(projectId, op, query)
         setActiveTaskId(rec.task_id)
         await load()
       } catch (e) {
@@ -317,7 +317,20 @@ function OverviewCard({
                 disabled={!enabled}
                 loading={triggerBusy[op]}
                 active={activeTaskId === OP_TRIGGERS[op].op}
-                onClick={() => activate(op)}
+                onClick={() => {
+                  if (op === 'generate_storyboard_range') {
+                    const input = window.prompt('从第几集开始续写分镜？(例如 31)', '31')
+                    if (input == null) return
+                    const startEpisode = Number(input.trim())
+                    if (!Number.isFinite(startEpisode) || startEpisode < 1) {
+                      window.alert('请输入有效的起始集数')
+                      return
+                    }
+                    activate(op, { start_episode: startEpisode })
+                  } else {
+                    activate(op)
+                  }
+                }}
               />
             )
           })}
@@ -562,7 +575,35 @@ function renderStageContent(stage: StageView, detail: ProjectDetail) {
     if (!detail.shots || detail.shots.length === 0) {
       return <div className="empty">暂无分镜内容</div>
     }
-    return <div className="shot-list">{detail.shots.map((s) => <ShotPreview key={s.shot_id} shot={s} />)}</div>
+    // 按集分组展示, 让"第几集有几个镜头"一目了然, 也便于续写第二季
+    const byEpisode = new Map<number, typeof detail.shots>()
+    for (const s of detail.shots) {
+      const list = byEpisode.get(s.episode) ?? []
+      list.push(s)
+      byEpisode.set(s.episode, list)
+    }
+    const episodes = Array.from(byEpisode.keys()).sort((a, b) => a - b)
+    const missingInScript = (detail.script_units ?? [])
+      .map((u) => Number(u.episode))
+      .filter((ep) => Number.isFinite(ep) && ep > 0 && !byEpisode.has(ep))
+    return (
+      <div className="shot-episodes">
+        {episodes.map((ep) => (
+          <div key={ep} className="shot-episode-block">
+            <div className="shot-episode-title">第 {ep} 集 · {byEpisode.get(ep)!.length} 个镜头</div>
+            <div className="shot-list">
+              {byEpisode.get(ep)!.map((s) => <ShotPreview key={s.shot_id} shot={s} />)}
+            </div>
+          </div>
+        ))}
+        {missingInScript.length > 0 && (
+          <div className="empty shot-missing-hint">
+            脚本里还有第 {missingInScript.sort((a, b) => a - b).join('、')} 集未生成分镜，
+            点上方「续写分镜(从某集起)」生成。
+          </div>
+        )}
+      </div>
+    )
   }
 
   // 视觉资产阶段

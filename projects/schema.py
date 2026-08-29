@@ -111,6 +111,8 @@ class Shot:
     video_path: str = ""
     duration: float = 5.0
     status: str = "draft"
+    # 该镜头所属集。旧数据(无此字段)默认归第 1 集, 保证向后兼容。
+    episode: int = 1
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Shot":
@@ -127,6 +129,7 @@ class Shot:
             video_path=data.get("video_path", ""),
             duration=float(data.get("duration", 5.0)),
             status=data.get("status", "draft"),
+            episode=int(data.get("episode", 1)),
         )
 
 

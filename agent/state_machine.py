@@ -50,6 +50,7 @@ STEP_ACTIONS = {
         Action("1", "查看脚本内容", "show_script", "查看脚本"),
         Action("2", "查看角色圣经", "show_characters", "查看角色"),
         Action("3", "查看分镜摘要", "show_storyboard", "查看分镜"),
+        Action("4", "续写分镜(从某集起)", "generate_storyboard_range", "续写分镜"),
         Action("5", "导出图片提示词", "export_image_prompts", "导出图片提示词"),
         Action("12", "准备下一段视频入参", "prepare_video_segment", "准备视频片段"),
         Action("13", "查看当前视频入参", "show_video_segment_payload", "查看视频入参"),

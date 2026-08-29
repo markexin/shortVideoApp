@@ -21,7 +21,11 @@ from fastapi import APIRouter
 import config
 from agent.state_machine import next_step
 from pipeline.character_bible import generate_visual_bible, regenerate_single_character
-from pipeline.drama_storyboard import generate_drama_storyboard
+from pipeline.drama_storyboard import (
+    generate_drama_storyboard,
+    generate_storyboard_for_episodes,
+    merge_storyboard_shots,
+)
 from pipeline.episode_assembler import assemble_episode
 from pipeline.script_writer import generate_script_reflectively
 from pipeline.video_segment_preparer import prepare_single_shot_payload
@@ -154,6 +158,31 @@ def trigger_generate_storyboard(
 
     task = create_task("generate_storyboard", project_id, "分镜生成任务已创建")
     _start_task(_run_generate_storyboard, task, project, manager)
+    return _ok(_task_status(task))
+
+
+@router.post("/projects/{project_id}/trigger/generate_storyboard_range")
+def trigger_generate_storyboard_range(
+    project_id: str,
+    start_episode: int,
+    end_episode: int | None = None,
+) -> dict:
+    """续写分镜：从第 start_episode 集起（可含 end_episode），按集生成并安全并入。"""
+    manager = get_project_manager()
+    project = load_project_or_404(project_id)
+
+    if project.current_step not in {"characters_ready", "storyboard_ready"}:
+        raise ValueError(f"项目当前步骤 {project.current_step} 无法生成分镜")
+
+    task = create_task("generate_storyboard_range", project_id, "续写分镜任务已创建")
+    _start_task(
+        _run_generate_storyboard_range,
+        task,
+        project,
+        manager,
+        start_episode,
+        end_episode,
+    )
     return _ok(_task_status(task))
 
 
@@ -371,8 +400,9 @@ def _run_generate_storyboard(
 
         logger.info("Generating storyboard for project %s", project.project_id)
 
-        shots = generate_drama_storyboard(
-            script=project.script,
+        # 逐集生成, 避免一次性生成整本脚本导致截断, 并给每个镜头打上集号
+        shots = generate_storyboard_for_episodes(
+            script_units=project.script_units,
             characters=project.characters,
             aspect_ratio=project.aspect_ratio,
         )
@@ -395,6 +425,76 @@ def _run_generate_storyboard(
 
     except Exception as exc:
         logger.exception("Storyboard generation failed for project %s", project.project_id)
+        task.status = "failed"
+        task.error = traceback.format_exc()
+
+
+def _run_generate_storyboard_range(
+    task: TaskRecord,
+    project: Project,
+    manager: ProjectManager,
+    start_episode: int,
+    end_episode: int | None = None,
+) -> None:
+    """续写分镜：逐集生成指定范围的集，安全并入（不覆盖其它集）。"""
+    try:
+        if not project.script:
+            raise ValueError("项目没有脚本，无法续写分镜")
+        if not project.characters:
+            raise ValueError("项目没有角色圣经，无法续写分镜")
+
+        script_episodes = sorted(
+            int(u.get("episode", 0)) for u in project.script_units
+            if str(u.get("episode", "")).isdigit()
+        )
+        max_episode = max(script_episodes) if script_episodes else project.episode_count
+        target_episodes = [
+            ep for ep in range(start_episode, (end_episode or max_episode) + 1)
+            if ep in set(script_episodes)
+        ]
+        if not target_episodes:
+            raise ValueError(
+                f"脚本里没有第 {start_episode} 集及之后的内容，无法续写。"
+                "请先在脚本中加入新集并确认完整性。"
+            )
+
+        task.status = "running"
+        task.message = f"正在续写第 {target_episodes[0]}–{target_episodes[-1]} 集分镜..."
+
+        logger.info(
+            "Generating storyboard range %s for project %s",
+            target_episodes, project.project_id,
+        )
+
+        new_shots = generate_storyboard_for_episodes(
+            script_units=project.script_units,
+            characters=project.characters,
+            aspect_ratio=project.aspect_ratio,
+            episodes=target_episodes,
+        )
+        project.shots = merge_storyboard_shots(
+            project.shots, new_shots, episodes=target_episodes
+        )
+
+        next_stage = next_step(project.current_step)
+        if next_stage:
+            project.current_step = next_stage
+
+        project.updated_at = _now_iso()
+        manager.save_project(project)
+
+        task.status = "completed"
+        task.progress = 1.0
+        task.message = "续写分镜完成"
+        task.result = {
+            "start_episode": target_episodes[0],
+            "end_episode": target_episodes[-1],
+            "shot_count": len(project.shots),
+            "episode_count": len({s.episode for s in project.shots}),
+        }
+
+    except Exception as exc:
+        logger.exception("Storyboard range generation failed for project %s", project.project_id)
         task.status = "failed"
         task.error = traceback.format_exc()
 

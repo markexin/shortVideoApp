@@ -14,7 +14,11 @@ from agent.commands import Command, parse_contextual_command
 from agent.state_machine import available_actions, can_transition
 from agent.terminal_input import read_text
 from pipeline.character_bible import VisualBible, generate_visual_bible
-from pipeline.drama_storyboard import generate_drama_storyboard
+from pipeline.drama_storyboard import (
+    generate_drama_storyboard,
+    generate_storyboard_for_episodes,
+    merge_storyboard_shots,
+)
 from pipeline.episode_assembler import assemble_episode
 from pipeline.generator import VideoGenerator
 from pipeline.prompt_builder import build_image_prompt
@@ -107,6 +111,7 @@ class ShortDramaAgent:
             "confirm_script": self._handle_confirm_script,
             "generate_characters": self._handle_generate_characters,
             "generate_storyboard": self._handle_generate_storyboard,
+            "generate_storyboard_range": self._handle_generate_storyboard_range,
             "export_image_prompts": self._handle_export_image_prompts,
             "prepare_video_segment": self._handle_prepare_video_segment,
             "show_video_segment_payload": self._handle_show_video_segment_payload,
@@ -353,9 +358,10 @@ class ShortDramaAgent:
             return
         console.print("[cyan]开始生成短剧分镜...[/cyan]")
         try:
-            with console.status("[cyan]正在调用 LLM 生成分镜，请稍候...[/cyan]", spinner="dots"):
-                project.shots = generate_drama_storyboard(
-                    project.script,
+            with console.status("[cyan]正在逐集调用 LLM 生成分镜，请稍候...[/cyan]", spinner="dots"):
+                # 逐集生成, 避免一次性生成整本脚本导致截断, 并给每个镜头打上集号
+                project.shots = generate_storyboard_for_episodes(
+                    project.script_units,
                     project.characters,
                     aspect_ratio=project.aspect_ratio,
                 )
@@ -367,7 +373,67 @@ class ShortDramaAgent:
             return
         project.updated_at = now_iso()
         self.manager.save_project(project)
-        console.print(f"[green]分镜已生成:[/green] {len(project.shots)} 个镜头。下一步输入 `导出图片提示词`。")
+        console.print(f"[green]分镜已生成:[/green] {len(project.shots)} 个镜头（覆盖 {len({s.episode for s in project.shots})} 集）。下一步输入 `导出图片提示词`。")
+        self._print_storyboard(project)
+        self._print_project_menu()
+
+    def _handle_generate_storyboard_range(self, command: Command) -> None:
+        project = self._require_project()
+        if not project:
+            return
+        if not self._require_step({"characters_ready", "storyboard_ready"}):
+            return
+        if not project.characters:
+            console.print("请先输入 `生成角色`。")
+            return
+        start_episode = int(command.args.get("start_episode", 1))
+        end_episode = command.args.get("end_episode")
+        end_episode = int(end_episode) if end_episode else None
+        script_episodes = sorted(
+            int(u.get("episode", 0)) for u in project.script_units if str(u.get("episode", "")).isdigit()
+        )
+        max_episode = max(script_episodes) if script_episodes else project.episode_count
+        target_episodes = [
+            ep for ep in range(start_episode, (end_episode or max_episode) + 1)
+            if ep in set(script_episodes)
+        ]
+        if not target_episodes:
+            console.print(
+                f"[red]脚本里没有第 {start_episode} 集及之后的内容，无法续写。[/red]"
+            )
+            console.print(
+                "续写第二季前，请先在脚本中加入新集（如第 31 集起），"
+                "确认脚本通过完整性校验后再执行 `续写分镜 31`。"
+            )
+            self._print_project_menu()
+            return
+        console.print(
+            f"[cyan]续写分镜（第 {target_episodes[0]}–{target_episodes[-1]} 集，共 {len(target_episodes)} 集）...[/cyan]"
+        )
+        try:
+            with console.status("[cyan]正在逐集调用 LLM 续写分镜，请稍候...[/cyan]", spinner="dots"):
+                new_shots = generate_storyboard_for_episodes(
+                    project.script_units,
+                    project.characters,
+                    aspect_ratio=project.aspect_ratio,
+                    episodes=target_episodes,
+                )
+            project.shots = merge_storyboard_shots(
+                project.shots, new_shots, episodes=target_episodes
+            )
+        except Exception as exc:
+            console.print(f"[red]续写分镜失败:[/red] {exc}")
+            self._print_project_menu()
+            return
+        if not self._advance_step("storyboard_ready"):
+            return
+        project.updated_at = now_iso()
+        self.manager.save_project(project)
+        console.print(
+            f"[green]续写完成:[/green] 现共 {len(project.shots)} 个镜头，"
+            f"覆盖 {len({s.episode for s in project.shots})} 集。原有镜头未被覆盖。"
+        )
+        self._print_storyboard(project)
         self._print_project_menu()
 
     def _handle_export_image_prompts(self, command: Command) -> None:
@@ -1429,15 +1495,36 @@ class ShortDramaAgent:
         if not project.shots:
             console.print("[yellow]分镜: 暂无。[/yellow]")
             return
-        table = Table(title="分镜摘要")
+        # 按集分组统计, 让"第几集有几个镜头"一目了然
+        by_episode: dict[int, list[Shot]] = {}
+        for shot in project.shots:
+            by_episode.setdefault(shot.episode, []).append(shot)
+        script_episodes = sorted(
+            int(u.get("episode", 0)) for u in project.script_units if str(u.get("episode", "")).isdigit()
+        )
+        generated_episodes = sorted(by_episode)
+        missing_episodes = [ep for ep in script_episodes if ep not in by_episode]
+        summary = "、".join(
+            f"第{ep}集 {len(by_episode[ep])}镜" for ep in generated_episodes
+        )
+        console.print(f"[cyan]分镜覆盖:[/cyan] {summary}")
+        if missing_episodes:
+            console.print(
+                f"[yellow]脚本有但分镜未生成:[/yellow] 第 {self._format_episode_ranges(missing_episodes)} 集"
+                f"（输入 `续写分镜 {missing_episodes[0]}` 生成）。"
+            )
+
+        table = Table(title="分镜摘要（按集）")
+        table.add_column("集", justify="right")
         table.add_column("镜头", justify="right")
         table.add_column("场景")
         table.add_column("角色")
         table.add_column("动作")
         table.add_column("状态")
-        rows = project.shots if full else project.shots[:8]
+        rows = project.shots if full else project.shots[:12]
         for shot in rows:
             table.add_row(
+                str(shot.episode),
                 str(shot.shot_id),
                 shot.scene_description[:30],
                 ", ".join(shot.characters)[:30],

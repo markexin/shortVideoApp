@@ -92,6 +92,15 @@ def parse_command(text: str) -> Command:
     if rewrite_match:
         return Command("rewrite_shot", {"shot_id": int(rewrite_match.group(1))})
 
+    range_match = re.search(r"续写分镜\s*(\d+)\s*(?:-\s*(\d+))?", raw)
+    if range_match:
+        start_episode = int(range_match.group(1))
+        end_episode = int(range_match.group(2)) if range_match.group(2) else None
+        return Command(
+            "generate_storyboard_range",
+            {"start_episode": start_episode, "end_episode": end_episode},
+        )
+
     image_match = re.search(r"第\s*(\d+)\s*镜图片[:：]\s*(.+)", raw)
     if image_match:
         return Command(
